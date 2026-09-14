@@ -51,3 +51,6 @@ coverage.xml
 Thumbs.db
 desktop.ini
 realtimesst.log
+
+# Perfiles de voz - datos personales del usuario (ADR-013)
+perfiles/
