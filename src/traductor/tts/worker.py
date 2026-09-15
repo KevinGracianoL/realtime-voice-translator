@@ -44,6 +44,7 @@ class Job:
 class ResultadoOk(TypedDict):
     ok: Literal[True]
     salida: str
+    formato: str
     elapsed_ms: float
 
 
@@ -90,7 +91,7 @@ def procesar_job(
         ruta.write_bytes(audio.datos)
     except OSError as exc:
         return {"ok": False, "error": f"no se pudo escribir {job.salida}: {exc}"}
-    return {"ok": True, "salida": job.salida, "elapsed_ms": elapsed_ms}
+    return {"ok": True, "salida": job.salida, "formato": audio.formato, "elapsed_ms": elapsed_ms}
 
 
 def _parsear_job(linea: str) -> Job:

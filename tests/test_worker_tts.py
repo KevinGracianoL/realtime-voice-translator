@@ -73,6 +73,7 @@ def test_procesar_job_ok(tmp_path: Path) -> None:
     )
     assert resultado["ok"] is True
     assert resultado["salida"] == "salida.wav"
+    assert resultado["formato"] == "wav"
     assert salida.read_bytes() == b"audio-hola"
     assert resultado["elapsed_ms"] >= 0
     assert backend.sintesis == [("hola", PERFIL)]

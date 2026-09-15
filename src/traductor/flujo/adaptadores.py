@@ -17,6 +17,25 @@ from pathlib import Path
 from typing import Any
 
 from traductor.flujo.outgoing import FlujoOutgoing
+from traductor.tts.backend_xtts import SR_XTTS
+
+
+def _pcm_f32_a_wav(datos: bytes, sample_rate: int) -> tuple[bytes, float]:
+    """PCM float32 mono → WAV int16 mono (el flujo trabaja con WAV)."""
+    import io
+    import wave
+
+    import numpy as np
+
+    pcm = np.frombuffer(datos, dtype=np.float32)
+    int16 = (np.clip(pcm, -1.0, 1.0) * 32767).astype(np.int16)
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sample_rate)
+        w.writeframes(int16.tobytes())
+    return buf.getvalue(), float(len(int16)) / sample_rate
 
 
 class AsrRealtime:  # pragma: no cover - requiere micrófono + RealtimeSTT
@@ -73,7 +92,7 @@ class TtsWorkerCliente:  # pragma: no cover - requiere venv-tts + modelo
         self._proceso: Any | None = None
 
     def iniciar(self) -> None:
-        boot = Path(__file__).resolve().parents[2] / "scripts" / "worker_tts_boot.py"
+        boot = Path(__file__).resolve().parents[3] / "scripts" / "worker_tts_boot.py"
         # el python viene del venv de la máquina, el script es del repo y el
         # directorio es un tempdir propio: ninguna entrada de red ni no
         # confiable llega a subprocess (falso positivo de S603).
@@ -81,9 +100,33 @@ class TtsWorkerCliente:  # pragma: no cover - requiere venv-tts + modelo
             [self._python, str(boot), str(self._directorio_salida)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,  # el stderr no es protocolo: sin drenar
+            # llenaría el buffer y trabaría al worker (torch imprime warnings)
             text=True,
         )
+        # CALENTAMIENTO AL ARRANCAR (ADR-013): la carga fría del modelo tarda
+        # ~45 s — sin este job, el primer turno siempre cae por el timeout de
+        # `readline`. El warm-up espera hasta 120 s y exige un resultado ok.
+        self._calentar()
+
+    def _calentar(self) -> None:
+        if self._proceso is None or self._proceso.stdin is None:
+            raise RuntimeError("worker TTS sin proceso para calentar")
+        job = {"texto": "warm up", "perfil_id": self._perfil_id, "salida": "warmup.wav"}
+        try:
+            self._proceso.stdin.write(json.dumps(job) + "\n")
+            self._proceso.stdin.flush()
+        except OSError as exc:  # el worker cayó antes de calentar (pipe muerto)
+            self.cerrar()
+            raise RuntimeError(f"el worker TTS no calentó: {exc}") from exc
+        linea = self._leer_resultado(timeout_s=120.0)
+        if linea is None or not linea.strip():
+            self.cerrar()
+            raise RuntimeError("el worker TTS no respondió al calentamiento (120 s)")
+        resultado = json.loads(linea)
+        if not resultado["ok"]:
+            self.cerrar()
+            raise RuntimeError(f"el worker TTS no calentó: {resultado.get('error', 'desconocido')}")
 
     def sintetizar(self, texto_en: str) -> tuple[bytes, float, str] | None:
         """Job → WAV. None si el worker falló o se trabó (escalera del flujo).
@@ -93,29 +136,49 @@ class TtsWorkerCliente:  # pragma: no cover - requiere venv-tts + modelo
         siguiente turno lo reinicia (watchdog sin reiniciar la llamada).
         """
         if self._proceso is None:
-            self.iniciar()  # reinicio tras un trabón (ADR-015)
+            try:
+                self.iniciar()  # reinicio tras un trabón (ADR-015)
+            except RuntimeError:
+                return None  # el reinicio falló: escalera (revisión #23)
         if self._proceso is None or self._proceso.stdin is None:
             return None
         nombre = "turno.wav"
         job = {"texto": texto_en, "perfil_id": self._perfil_id, "salida": nombre}
-        self._proceso.stdin.write(json.dumps(job) + "\n")
-        self._proceso.stdin.flush()
+        try:
+            self._proceso.stdin.write(json.dumps(job) + "\n")
+            self._proceso.stdin.flush()
+        except OSError:
+            self.cerrar()  # pipe muerto (el worker cayó): escalera, se reinicia
+            return None
         linea = self._leer_resultado()
         if linea is None:
             self.cerrar()  # el worker se trabó: escalera; el próximo turno reinicia
+            return None
+        if not linea.strip():
+            self.cerrar()
             return None
         resultado = json.loads(linea)
         if not resultado["ok"]:
             return None
         ruta = self._directorio_salida / resultado["salida"]
-        import wave
+        datos = ruta.read_bytes()
+        formato = resultado["formato"]
+        if formato == "pcm_f32le":
+            # el worker escribe los bytes del AudioResult tal cual (ADR-011:
+            # pcm_f32le para XTTS); el flujo trabaja con WAV: se envuelve
+            audio_wav, duracion_s = _pcm_f32_a_wav(datos, SR_XTTS)
+            return audio_wav, duracion_s, "xtts-kevin"
+        if formato == "wav":
+            import io
+            import wave
 
-        with wave.open(str(ruta), "rb") as w:
-            duracion_s = w.getnframes() / w.getframerate()
-        return ruta.read_bytes(), duracion_s, "xtts-kevin"
+            with wave.open(io.BytesIO(datos), "rb") as w:
+                duracion_s = w.getnframes() / w.getframerate()
+            return datos, duracion_s, "xtts-kevin"
+        return None  # formato desconocido: escalera
 
-    def _leer_resultado(self) -> str | None:
-        """readline con timeout de 30 s (None si el worker no respondió)."""
+    def _leer_resultado(self, timeout_s: float = 30.0) -> str | None:
+        """readline con timeout (None si el worker no respondió)."""
         import threading
 
         if self._proceso is None or self._proceso.stdout is None:
@@ -128,10 +191,15 @@ class TtsWorkerCliente:  # pragma: no cover - requiere venv-tts + modelo
 
         hilo = threading.Thread(target=leer, daemon=True)
         hilo.start()
-        hilo.join(timeout=30.0)
+        hilo.join(timeout=timeout_s)
         if hilo.is_alive():
             return None
         return linea[0] if linea else None
+
+    @property
+    def pid(self) -> int | None:
+        """PID del worker (para vigilar SU memoria, no la del harness)."""
+        return self._proceso.pid if self._proceso is not None else None
 
     def cerrar(self) -> None:
         if self._proceso is not None:
@@ -141,10 +209,43 @@ class TtsWorkerCliente:  # pragma: no cover - requiere venv-tts + modelo
 
 class SalidaCable:  # pragma: no cover - requiere VB-CABLE
     """Escribe el WAV del TTS a CABLE Input (el audio sintetizado NO vuelve
-    al micrófono físico: la ruta de salida es explícitamente el cable)."""
+    al micrófono físico: la ruta de salida es explícitamente el cable).
+
+    `abrir()`/`cerrar()` permiten mantener el stream abierto entre turnos
+    (abrir por turno paga ~1-3 s de overhead en Windows).
+    """
 
     def __init__(self, rate_cable: int = 48000) -> None:
         self._rate_cable = rate_cable
+        self._pa: Any | None = None
+        self._stream: Any | None = None
+
+    def abrir(self) -> None:
+        import pyaudio
+
+        self._pa = pyaudio.PyAudio()
+        indice = next(
+            i
+            for i in range(self._pa.get_device_count())
+            if "CABLE Input" in str(self._pa.get_device_info_by_index(i)["name"])
+            and self._pa.get_device_info_by_index(i)["maxOutputChannels"] == 2
+        )
+        self._stream = self._pa.open(
+            format=pyaudio.paInt16,
+            channels=2,
+            rate=self._rate_cable,
+            output=True,
+            output_device_index=indice,
+        )
+
+    def cerrar(self) -> None:
+        if self._stream is not None:
+            self._stream.stop_stream()
+            self._stream.close()
+            self._stream = None
+        if self._pa is not None:
+            self._pa.terminate()
+            self._pa = None
 
     def reproducir(self, audio: bytes, duracion_s: float, nombre: str) -> None:
         import io
@@ -166,6 +267,10 @@ class SalidaCable:  # pragma: no cover - requiere VB-CABLE
         res = mono[i0] * (1 - alpha) + mono[i1] * alpha
         stereo = np.repeat(res, 2)
         pcm = (np.clip(stereo, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+        if self._stream is not None:
+            self._stream.write(pcm)  # stream persistente (abrir()/cerrar())
+            return
+
         pa = pyaudio.PyAudio()
         indice = next(
             i

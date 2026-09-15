@@ -48,19 +48,22 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
         perfil_id=perfil_por_defecto(),
     )
     worker_tts.iniciar()
+    cable = SalidaCable()
+    cable.abrir()  # el stream se mantiene abierto entre turnos (revisión #23)
 
     flujo = FlujoOutgoing(
         traducir=lambda es: traducir(es, "es", "en"),
         tts_primario=worker_tts,  # escalera: si el worker falla...
         tts_fallback=None,  # ...la voz genérica llega en un PR posterior
         teleprompter=TeleprompterHttp(),
-        salida_audio=SalidaCable(),
+        salida_audio=cable,
     )
     try:
         AsrRealtime(flujo).correr()
     except KeyboardInterrupt:
         print("\nFlujo detenido.")
     finally:
+        cable.cerrar()
         worker_tts.cerrar()
 
 
