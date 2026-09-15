@@ -440,7 +440,6 @@ def _flujo_stream(
     verificar: Callable[[bytes], str | None] | None = None,
     max_sobrantes: int = 0,
 ) -> tuple[FlujoOutgoing, _TeleprompterFake, _SalidaFake]:
-
     teleprompter = _TeleprompterFake()
     salida = _SalidaFake()
     flujo = FlujoOutgoing(
@@ -589,7 +588,6 @@ def test_concatenar_wav_une_chunks() -> None:
 
 
 def test_concatenar_wav_chunk_unico_pasa_tal_cual() -> None:
-
     flujo, _teleprompter, _salida = _flujo_stream()
     a = _wav_bytes(1)
     assert flujo._concatenar_wav([a]) == a
