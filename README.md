@@ -254,7 +254,7 @@ texto, ms = medir_tiempo(lambda: traducir("hello", "en", "es"), clock=time.perf_
 - [x] **Fase 2f — Go/no-go del motor** — **XTTS-v2 aceptado por los gates medidos** (pipeline peor caso 1469.3 ms < 2000 ms, margen 531 ms; candidato B rechazado por TTFA arquitectural 7885.8 ms) — evidencia en [ADR-014](docs/ADR-014-gates-aceptacion-tts.md)
 - [x] **Fase 2g — Motor elegido** — XTTS-v2; aprobación final respaldada por el [ADR-019](docs/ADR-019-endurance-sesion.md)
 - [x] **Fase 3 — El flujo `outgoing_es_to_en`** — mic → VAD → ASR es → Argos → teleprompter → XTTS → VB-CABLE, con la escalera de degradación (ADR-015)
-- [x] **Fase 4 — Endurance 90 min + fixes del cierre** — la corrida larga del ADR-019 (417 turnos, memoria estable) + job streaming del worker, cable por bloques y validación de artefactos en vivo: cierre del turno p95 **21.3 s → 1.53 s**, atrasadas 417/417 → 1/78
+- [x] **Fase 4 — Endurance 90 min + fixes del cierre** — la corrida larga del ADR-019 (417 turnos, memoria estable) + job streaming del worker, cable por bloques y validación de artefactos en vivo: re-corrida de 90 min con **692 turnos**, cierre del turno p95 **21.3 s → 1.60 s**, atrasadas 417/417 → **1/692**
 - [ ] **Fase 5 — EN→ES con clon remoto opcional** — subtítulos primero; el clon del entrevistador solo si las muestras pasan los controles
 - [ ] **Candidato futuro — CosyVoice 3** (Apache-2.0) — medido con el mismo harness para quitar el techo no-comercial de los pesos de XTTS
 

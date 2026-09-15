@@ -106,9 +106,9 @@ def procesar_job(
     except Exception as exc:
         return {"ok": False, "error": f"síntesis falló: {exc}"}
     validado = _validar_salida(directorio_salida, job.salida)
-    if not isinstance(validado, tuple):  # ResultadoError
+    if not isinstance(validado, Path):  # ResultadoError
         return validado
-    ruta = validado[0]
+    ruta = validado
     error = _escribir(ruta, job.salida, audio)
     if error is not None:
         return error
@@ -125,13 +125,13 @@ def _parsear_job(linea: str) -> Job:
     )
 
 
-def _validar_salida(directorio_salida: Path, salida: str) -> tuple[Path, str] | ResultadoError:
+def _validar_salida(directorio_salida: Path, salida: str) -> Path | ResultadoError:
     """Confina `salida` al directorio de trabajo (ADR-013)."""
     base = directorio_salida.resolve()
     ruta = (directorio_salida / salida).resolve()
     if not ruta.is_relative_to(base):
         return {"ok": False, "error": f"salida fuera del directorio de trabajo: {salida}"}
-    return ruta, f"{salida}"
+    return ruta
 
 
 def _escribir(ruta: Path, salida: str, audio: AudioResult) -> ResultadoError | None:
@@ -183,10 +183,10 @@ def procesar_job_stream(
     for i, audio in enumerate(chunks):
         salida = f"{job.salida}.{i}.pcm"
         validado = _validar_salida(directorio_salida, salida)
-        if not isinstance(validado, tuple):  # ResultadoError
+        if not isinstance(validado, Path):  # ResultadoError
             yield validado
             return
-        ruta = validado[0]
+        ruta = validado
         error = _escribir(ruta, salida, audio)
         if error is not None:
             yield error

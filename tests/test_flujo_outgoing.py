@@ -604,7 +604,23 @@ def test_sobrantes_compara_contra_texto_traducido() -> None:
         == []
     )
     assert _sobrantes("gibberish words here", "hello world") == ["gibberish", "words", "here"]
-    assert _sobrantes("hello world hello", "hello world") == []
+
+
+def test_sobrantes_cuenta_repeticiones() -> None:
+    """Una palabra REPETIDA de más es un artefacto (repetición patológica):
+    cada aparición del retorno consume una del esperado (multiset)."""
+    assert _sobrantes("hello world hello", "hello world") == ["hello"]
+    assert _sobrantes("no no no", "no") == ["no", "no"]
+    assert _sobrantes("no", "no no no") == []  # menos apariciones no es sobrante
+    assert _sobrantes("hello world hello world", "hello world") == ["hello", "world"]
+
+
+def test_sobrantes_consume_una_aparicion_por_repeticion() -> None:
+    """El multiset consume UNA aparición por cada repetición (mutante `-=2`:
+    con 'no no no' vs 'no', restar 2 daría -3 y marcaría la segunda como
+    sobrante — el resultado correcto es exactamente ['no', 'no'])."""
+    assert _sobrantes("no no no", "no") == ["no", "no"]  # consume de a 1
+    assert _sobrantes("a a a b", "a a") == ["a", "b"]
 
 
 def test_sobrantes_normaliza_puntuacion() -> None:

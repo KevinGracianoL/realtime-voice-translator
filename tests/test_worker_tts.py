@@ -114,7 +114,7 @@ def test_procesar_job_perfil_ausente(tmp_path: Path) -> None:
     job = Job(texto="hola", perfil_id="otro", salida="salida.wav")
     resultado = procesar_job(job, BackendFake(), TiendaFake(), directorio_salida=tmp_path)
     assert resultado["ok"] is False
-    assert "perfil no encontrado" in resultado["error"]
+    assert "perfil no encontrado: otro" in resultado["error"]
     assert not (tmp_path / "salida.wav").exists()
 
 
@@ -123,7 +123,7 @@ def test_procesar_job_perfil_que_revienta(tmp_path: Path) -> None:
     job = Job(texto="hola", perfil_id="revienta", salida="salida.wav")
     resultado = procesar_job(job, BackendFake(), TiendaFake(), directorio_salida=tmp_path)
     assert resultado["ok"] is False
-    assert "no se pudo obtener el perfil" in resultado["error"]
+    assert "no se pudo obtener el perfil: tienda rota" in resultado["error"]
 
 
 def test_procesar_job_backend_falla_no_mata(tmp_path: Path) -> None:
@@ -132,7 +132,7 @@ def test_procesar_job_backend_falla_no_mata(tmp_path: Path) -> None:
         job, BackendFake(fallar=True), TiendaFake({"kevin-es": PERFIL}), directorio_salida=tmp_path
     )
     assert resultado["ok"] is False
-    assert "GPU no disponible" in resultado["error"]
+    assert "síntesis falló: GPU no disponible" in resultado["error"]
     assert not (tmp_path / "salida.wav").exists()
 
 
@@ -156,7 +156,7 @@ def test_procesar_job_salida_fuera_directorio(tmp_path: Path) -> None:
         job, BackendFake(), TiendaFake({"kevin-es": PERFIL}), directorio_salida=tmp_path
     )
     assert resultado["ok"] is False
-    assert "fuera del directorio" in resultado["error"]
+    assert "salida fuera del directorio de trabajo" in resultado["error"]
     assert not fuera.exists()
 
 
@@ -168,7 +168,7 @@ def test_procesar_job_salida_absoluta_fuera_rechazada(tmp_path: Path) -> None:
         job, BackendFake(), TiendaFake({"kevin-es": PERFIL}), directorio_salida=tmp_path
     )
     assert resultado["ok"] is False
-    assert "fuera del directorio" in resultado["error"]
+    assert "salida fuera del directorio de trabajo" in resultado["error"]
     assert not fuera.exists()
 
 
@@ -352,7 +352,7 @@ def test_procesar_job_stream_perfil_ausente(tmp_path: Path) -> None:
         procesar_job_stream(job, BackendStreamFake(), TiendaFake(), directorio_salida=tmp_path)
     )
     assert resultados[0]["ok"] is False
-    assert "perfil no encontrado" in resultados[0]["error"]
+    assert "perfil no encontrado: otro" in resultados[0]["error"]
 
 
 def test_procesar_job_stream_perfil_que_revienta(tmp_path: Path) -> None:
@@ -362,7 +362,7 @@ def test_procesar_job_stream_perfil_que_revienta(tmp_path: Path) -> None:
         procesar_job_stream(job, BackendStreamFake(), TiendaFake(), directorio_salida=tmp_path)
     )
     assert resultados[0]["ok"] is False
-    assert "no se pudo obtener el perfil" in resultados[0]["error"]
+    assert "no se pudo obtener el perfil: tienda rota" in resultados[0]["error"]
 
 
 def test_procesar_job_stream_sintesis_que_revienta(tmp_path: Path) -> None:
@@ -382,7 +382,7 @@ def test_procesar_job_stream_sintesis_que_revienta(tmp_path: Path) -> None:
         )
     )
     assert resultados[0]["ok"] is False
-    assert "síntesis falló" in resultados[0]["error"]
+    assert "síntesis falló: GPU no disponible" in resultados[0]["error"]
     assert len(resultados) == 1
 
 
@@ -421,7 +421,7 @@ def test_procesar_job_stream_salida_fuera_directorio(tmp_path: Path) -> None:
         )
     )
     assert resultados[0]["ok"] is False
-    assert "fuera del directorio" in resultados[0]["error"]
+    assert "salida fuera del directorio de trabajo: ../fuera.0.pcm" in resultados[0]["error"]
 
 
 def test_main_procesa_job_streaming(tmp_path: Path) -> None:

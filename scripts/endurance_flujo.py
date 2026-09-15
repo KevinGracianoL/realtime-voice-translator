@@ -72,17 +72,6 @@ def _ventanas_vad(whisper: Any, muestras: Any, sr: int) -> list[Any]:  # pragma:
     return ventanas
 
 
-def _sobrantes(transcripcion: str, esperado: str) -> list[str]:  # pragma: no cover
-    """Palabras del ASR-de-retorno que NO están en el texto traducido (fix 3)."""
-
-    def normalizar(texto: str) -> str:
-        return " ".join("".join(c for c in texto.lower() if c.isalnum() or c.isspace()).split())
-
-    retorno = normalizar(transcripcion).split()
-    esperadas = set(normalizar(esperado).split())
-    return [p for p in retorno if p not in esperadas]
-
-
 def _concatenar_wav(audios: list[bytes]) -> bytes:  # pragma: no cover
     """Une los chunks WAV del turno (mismo formato del flujo real)."""
     import io
@@ -119,6 +108,7 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
         perfil_por_defecto,
         python_venv_tts,
     )
+    from traductor.flujo.outgoing import _sobrantes  # fuente única de la regla
     from traductor.hardware.cuda import vram_ocupada_mib
     from traductor.traduccion.argos import traducir
 

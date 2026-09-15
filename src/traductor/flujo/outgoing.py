@@ -24,6 +24,7 @@ lo reproduce si el turno sigue activo o lo DRENA sin reproducir si se canceló
 from __future__ import annotations
 
 import threading
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
@@ -267,16 +268,23 @@ def _normalizar(texto: str) -> str:
 
 
 def _sobrantes(transcripcion: str, esperado: str) -> list[str]:
-    """Palabras del ASR-de-retorno que NO están en el texto esperado.
+    """Palabras del ASR-de-retorno que EXCEDEN las del texto esperado.
 
-    ADR-019, fix 3: en el streaming por chunks la validación NO puede exigir
-    todas las palabras (el texto completo aún no se sintetizó); lo que SÍ se
-    puede exigir es que el audio no diga palabras que el texto no contiene
-    (un artefacto añade basura; 'trauthor' SÍ está en el texto traducido).
+    ADR-019, fix 3: la validación exige que el audio no diga palabras que el
+    texto no contiene (un artefacto añade basura; 'trauthor' SÍ está en el
+    texto traducido) y que no REPITA de más (una repetición patológica es un
+    artefacto conocido: el sanity del arranque ya la detecta). El conteo es
+    por multiset: cada palabra del retorno consume una aparición esperada.
     """
     retorno = _normalizar(transcripcion).split()
-    esperadas = set(_normalizar(esperado).split())
-    return [palabra for palabra in retorno if palabra not in esperadas]
+    disponibles = Counter(_normalizar(esperado).split())
+    sobrantes: list[str] = []
+    for palabra in retorno:
+        if disponibles[palabra] > 0:
+            disponibles[palabra] -= 1
+        else:
+            sobrantes.append(palabra)
+    return sobrantes
 
 
 def validar_arranque(
