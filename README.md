@@ -75,7 +75,7 @@ flowchart LR
     end
 ```
 
-**Escalera de degradación (sin reiniciar la entrevista):** voz clonada + subtítulos → voz genérica + subtítulos → solo subtítulos. Y antes de que un audio defectuoso salga al micrófono virtual: **validación ASR-de-retorno** (palabras añadidas/omitidas/repetidas, clipping, silencios anómalos) — nunca se reproduce audio sospechoso solo para mantener la clonación.
+**Escalera de degradación (sin reiniciar la entrevista):** voz clonada + subtítulos → voz genérica + subtítulos → solo subtítulos. Y antes de que un audio defectuoso salga al micrófono virtual: **validación ASR-de-retorno** (palabras añadidas/omitidas/repetidas, clipping, silencios anómalos) — no se reproduce audio sospechoso solo para mantener la clonación (en el modo sin streaming la validación es previa al ruteo; en streaming protege el resto del turno y deja telemetría, ver ADR-019).
 
 ---
 
