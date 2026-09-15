@@ -771,3 +771,25 @@ def test_cable_sin_lock_no_reproduce() -> None:
     cable._lock_escritura = None
     cable.reproducir(b"wav-roto", 1.0, "xtts-kevin")
     assert True  # no lanza y no reproduce: flujo sigue vivo
+
+
+def test_cable_estado_inicial() -> None:
+    """El cable nace sin stream ni lock (mutantes `= ""` del __init__: un
+    falsy no-None pasaría los guards `is None` y reventaría al abrir)."""
+    from traductor.flujo.adaptadores import SalidaCable
+
+    cable = SalidaCable()
+    assert cable._pa is None
+    assert cable._stream is None
+    assert cable._lock_escritura is None
+
+
+def test_worker_cliente_estado_inicial() -> None:
+    """El cliente nace sin proceso ni lock de lectura (mutantes `= ""`)."""
+    from pathlib import Path
+
+    from traductor.flujo.adaptadores import TtsWorkerCliente
+
+    worker = TtsWorkerCliente(python=Path("python"), directorio_salida=Path("."), perfil_id="kevin")
+    assert worker._proceso is None
+    assert worker._lock_lectura is None
