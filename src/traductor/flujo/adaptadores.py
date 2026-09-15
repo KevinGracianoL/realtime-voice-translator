@@ -17,8 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from traductor.flujo.outgoing import FlujoOutgoing
-
-SR_XTTS = 24000  # sample rate de salida del BackendXtts (ADR-011)
+from traductor.tts.backend_xtts import SR_XTTS
 
 
 def _pcm_f32_a_wav(datos: bytes, sample_rate: int) -> tuple[bytes, float]:
@@ -114,8 +113,12 @@ class TtsWorkerCliente:  # pragma: no cover - requiere venv-tts + modelo
         if self._proceso is None or self._proceso.stdin is None:
             raise RuntimeError("worker TTS sin proceso para calentar")
         job = {"texto": "warm up", "perfil_id": self._perfil_id, "salida": "warmup.wav"}
-        self._proceso.stdin.write(json.dumps(job) + "\n")
-        self._proceso.stdin.flush()
+        try:
+            self._proceso.stdin.write(json.dumps(job) + "\n")
+            self._proceso.stdin.flush()
+        except OSError as exc:  # el worker cayó antes de calentar (pipe muerto)
+            self.cerrar()
+            raise RuntimeError(f"el worker TTS no calentó: {exc}") from exc
         linea = self._leer_resultado(timeout_s=120.0)
         if linea is None or not linea.strip():
             self.cerrar()
@@ -133,7 +136,10 @@ class TtsWorkerCliente:  # pragma: no cover - requiere venv-tts + modelo
         siguiente turno lo reinicia (watchdog sin reiniciar la llamada).
         """
         if self._proceso is None:
-            self.iniciar()  # reinicio tras un trabón (ADR-015)
+            try:
+                self.iniciar()  # reinicio tras un trabón (ADR-015)
+            except RuntimeError:
+                return None  # el reinicio falló: escalera (revisión #23)
         if self._proceso is None or self._proceso.stdin is None:
             return None
         nombre = "turno.wav"
@@ -189,6 +195,11 @@ class TtsWorkerCliente:  # pragma: no cover - requiere venv-tts + modelo
         if hilo.is_alive():
             return None
         return linea[0] if linea else None
+
+    @property
+    def pid(self) -> int | None:
+        """PID del worker (para vigilar SU memoria, no la del harness)."""
+        return self._proceso.pid if self._proceso is not None else None
 
     def cerrar(self) -> None:
         if self._proceso is not None:

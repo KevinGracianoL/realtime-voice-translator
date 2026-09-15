@@ -231,6 +231,24 @@ def test_segmentos_concurrentes_no_pierden_turnos() -> None:
         sys.setswitchinterval(intervalo_anterior)
 
 
+def test_reinicio_del_worker_que_falla_es_escalera() -> None:
+    """Regresión del watchdog (revisión #23): si `iniciar()` lanza RuntimeError
+    en el reinicio tras un trabón, `sintetizar` devuelve None (escalera) — el
+    turno NO muere en silencio en el hilo daemon del flujo real."""
+    from pathlib import Path
+
+    from traductor.flujo.adaptadores import TtsWorkerCliente
+
+    worker = TtsWorkerCliente(python=Path("python"), directorio_salida=Path("."), perfil_id="kevin")
+    worker._proceso = None  # fuerzo el camino de reinicio
+
+    def iniciar_que_falla() -> None:
+        raise RuntimeError("el worker TTS no respondió al calentamiento (120 s)")
+
+    worker.iniciar = iniciar_que_falla  # type: ignore[method-assign]
+    assert worker.sintetizar("hello") is None
+
+
 def test_validar_arranque_pasa_con_traduccion_sana() -> None:
     salud = validar_arranque(lambda es: "my strongest experience is with distributed systems")
     assert salud == Salud(disponible=True, detalle="")

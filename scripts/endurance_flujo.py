@@ -31,12 +31,6 @@ from pathlib import Path
 from typing import Any
 
 
-def _texto_largo(dormir_s: float) -> None:
-    import time as _t
-
-    _t.sleep(dormir_s)
-
-
 def _duracion_voz(wav: Path) -> float:  # pragma: no cover - máquina
     import soundfile as sf
 
@@ -73,7 +67,7 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
     from traductor.traduccion.argos import traducir
 
     DURACION_MIN = float(os.environ.get("ENDURANCE_MIN", "90.0"))
-    wav = Path(r"C:\Users\Kevin\Documents\Proyecto-traductor\scripts\audio\voz_kevin.wav")
+    wav = Path(__file__).resolve().parents[1] / "scripts" / "audio" / "voz_kevin.wav"
     muestras, sr = sf.read(str(wav), dtype="float32")
 
     whisper = WhisperModel("tiny", device="cuda", compute_type="int8_float16")
@@ -108,11 +102,15 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
         return " ".join("".join(c for c in texto.lower() if c.isalnum() or c.isspace()).split())
 
     def _verificar_artefactos(audio: bytes, intencion: str) -> None:
-        """ASR-de-retorno: palabras faltantes/sobrantes del audio sintetizado."""
+        """ASR-de-retorno: palabras faltantes/sobrantes del audio sintetizado.
+
+        Se pasa el WAV como BytesIO (revisión #23): faster-whisper con
+        ndarray NO resamplea (asume 16 k) y oiría el audio a 2/3 de
+        velocidad — los desvíos medidos eran en parte el instrumento.
+        """
         import io
 
-        datos, sr_audio = sf.read(io.BytesIO(audio), dtype="float32")
-        segs, _ = whisper.transcribe(datos, language="en")
+        segs, _ = whisper.transcribe(io.BytesIO(audio), language="en")
         retorno = _normalizar(" ".join(s.text for s in segs)).split()
         esperado = _normalizar(intencion).split()
         faltan = [w for w in esperado if w not in retorno]
@@ -151,7 +149,7 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
             if turnos % 20 == 0:
                 _verificar_artefactos(audio, texto_en)
         except Exception as exc:  # noqa: BLE001 - el bucle no muere por un turno
-            if "out of memory" in str(exc).lower() or "cuda" in str(exc).lower():
+            if "out of memory" in str(exc).lower():
                 oom += 1
             print(f"turno {turnos}: error capturado: {exc}")
             continue
@@ -160,7 +158,12 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
             muestras_ram.append((minuto, psutil.virtual_memory().used / 1024**2))
             vram = vram_ocupada_mib(torch.cuda)
             muestras_vram.append((minuto, vram if vram is not None else 0.0))
-            rss = psutil.Process().memory_info().rss / 1024**2
+            pid_worker = worker.pid
+            rss = (
+                psutil.Process(pid_worker).memory_info().rss / 1024**2
+                if pid_worker is not None
+                else 0.0
+            )
             muestras_worker_rss.append((minuto, rss))
             siguiente_memoria = time.time() + 60
 
