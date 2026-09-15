@@ -14,10 +14,24 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
-from traductor.flujo.outgoing import FlujoOutgoing
 from traductor.tts.backend_xtts import SR_XTTS
+
+
+class FlujoASR(Protocol):
+    """Contrato mínimo que un flujo le expone al ASR en tiempo real.
+
+    `segmento_final` devuelve el nivel de la escalera (int en outgoing) o un
+    bool (incoming): el retorno `object` cubre ambas. Parámetros positional-only
+    (`/`): los flujos nombran el texto distinto (`texto_es` / `texto_en`) y el
+    nombre no debe importar en el protocol (Hal r1 del PR #25: `Any` apagaba
+    mypy --strict sobre estos métodos).
+    """
+
+    def parcial(self, texto: str, /) -> None: ...
+    def cancelar_turno_activo(self) -> None: ...
+    def segmento_final(self, texto: str, /) -> object: ...
 
 
 def _pcm_f32_a_wav(datos: bytes, sample_rate: int) -> tuple[bytes, float]:
@@ -64,20 +78,36 @@ class AsrRetorno:
 
 
 class AsrRealtime:  # pragma: no cover - requiere micrófono + RealtimeSTT
-    """Micrófono → segmentos: los PARCIALES cancelan y van a pantalla; los
-    FINALES se procesan en un hilo worker por turno.
+    """Entrada de audio → segmentos: los PARCIALES cancelan y van a pantalla;
+    los FINALES se procesan en un hilo worker por turno.
+
+    Sirve para AMBAS direcciones del ADR-015:
+    - outgoing (hablar): el micrófono físico, `idioma="es"` (default).
+    - incoming (escuchar): el audio REMOTO del entrevistador llega por el
+      cable virtual (CABLE Input como salida de Meet/Zoom), capturado con
+      `input_device_index` del CABLE Output, `idioma="en"`.
 
     RealtimeSTT ya integra VAD/endpointing y entrega sus callbacks desde SUS
     propios hilos (revisión #22: el invariante de hilo único era falso).
-    - `_parcial`: el usuario volvió a hablar → se CANCELA la síntesis del
+    - `_parcial`: el usuario/entrevistador volvió a hablar → se CANCELA el
     turno anterior en vuelo (`cancelar_turno_activo`) y el parcial va a
     pantalla. Sin esto, la cancelación del ADR-015 era código muerto.
-    - `_final`: el turno corre en un hilo daemon para que el micrófono siga
+    - `_final`: el turno corre en un hilo daemon para que la entrada siga
     fluyendo y un nuevo segmento pueda cancelarlo (cola de tamaño 1).
     """
 
-    def __init__(self, flujo: FlujoOutgoing) -> None:
+    def __init__(
+        self,
+        flujo: FlujoASR,
+        *,
+        idioma: str = "es",
+        input_device_index: int | None = None,
+        etiqueta: str = "",
+    ) -> None:
         self._flujo = flujo
+        self._idioma = idioma
+        self._input_device_index = input_device_index
+        self._etiqueta = etiqueta or f"Flujo {idioma}"
 
     def _parcial(self, texto: str) -> None:
         self._flujo.cancelar_turno_activo()
@@ -93,12 +123,13 @@ class AsrRealtime:  # pragma: no cover - requiere micrófono + RealtimeSTT
 
         grabador = AudioToTextRecorder(
             model="tiny",
-            language="es",
+            language=self._idioma,
             device="cuda",
             compute_type="int8",
+            input_device_index=self._input_device_index,
             on_realtime_transcription_update=self._parcial,
         )
-        print("Flujo outgoing listo: habla en español. Ctrl+C para salir.")
+        print(f"{self._etiqueta} listo: ctrl+C para salir.")
         while True:
             grabador.text(self._final)
 
@@ -336,12 +367,12 @@ class SalidaCable:  # pragma: no cover - requiere VB-CABLE
 
         self._lock_escritura = threading.Lock()
         self._pa = pyaudio.PyAudio()
-        indice = next(
-            i
-            for i in range(self._pa.get_device_count())
-            if "CABLE Input" in str(self._pa.get_device_info_by_index(i)["name"])
-            and self._pa.get_device_info_by_index(i)["maxOutputChannels"] == 2
-        )
+        indice = _buscar_device(self._pa, "CABLE Input", "maxOutputChannels", 2)
+        if indice is None:
+            raise RuntimeError(
+                "VB-CABLE no está disponible: instala VB-CABLE (dispositivo "
+                "'CABLE Input (VB-Audio Virtual Cable)') antes de abrir la salida"
+            )
         self._stream = self._pa.open(
             format=pyaudio.paInt16,
             channels=2,
@@ -474,3 +505,37 @@ def perfil_por_defecto() -> str:
     enrolamiento previo o 'kevin' si no hay ninguno."""
     id_ = os.environ.get("TRADUCTOR_PERFIL_ID", "kevin")
     return id_
+
+
+def _buscar_device(pa: Any, nombre_parcial: str, canales: str, valor: int) -> int | None:
+    """Índice del device de pyaudio cuyo nombre contiene `nombre_parcial` y
+    cuya entrada/salida tiene `valor` canales; None si no existe (VB-CABLE
+    ausente → el caller lanza con mensaje claro, no un StopIteration vacío)."""
+    for i in range(pa.get_device_count()):
+        info = pa.get_device_info_by_index(i)
+        if nombre_parcial in str(info["name"]) and info[canales] == valor:
+            return i
+    return None
+
+
+def indice_cable_output() -> int:  # pragma: no cover - requiere VB-CABLE
+    """Índice del device de ENTRADA del cable (CABLE Output) para el flujo
+    incoming: el audio REMOTO del entrevistador se captura de aquí.
+
+    En Meet/Zoom se configura CABLE Input como dispositivo de SALIDA de audio
+    (el audio remoto entra al cable) y este flujo lee de CABLE Output.
+    """
+    import pyaudio
+
+    pa = pyaudio.PyAudio()
+    try:
+        indice = _buscar_device(pa, "CABLE Output", "maxInputChannels", 2)
+    finally:
+        pa.terminate()
+    if indice is None:
+        raise RuntimeError(
+            "VB-CABLE no está disponible: instala VB-CABLE y configura en "
+            "Meet/Zoom la SALIDA de audio en 'CABLE Input (VB-Audio Virtual "
+            "Cable)' antes de correr el flujo incoming"
+        )
+    return indice

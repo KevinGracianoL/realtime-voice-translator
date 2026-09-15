@@ -809,3 +809,38 @@ def test_worker_cliente_estado_inicial() -> None:
     worker = TtsWorkerCliente(python=Path("python"), directorio_salida=Path("."), perfil_id="kevin")
     assert worker._proceso is None
     assert worker._lock_lectura is None
+
+
+class _PaFake:
+    """pyaudio fake para _buscar_device (device 0 sin cable, 1 = CABLE Input)."""
+
+    def __init__(self) -> None:
+        self._devices = [
+            {"name": "Altavoces", "maxOutputChannels": 2, "maxInputChannels": 0},
+            {
+                "name": "CABLE Input (VB-Audio Virtual Cable)",
+                "maxOutputChannels": 2,
+                "maxInputChannels": 0,
+            },
+            {
+                "name": "CABLE Output (VB-Audio Virtual Cable)",
+                "maxOutputChannels": 0,
+                "maxInputChannels": 2,
+            },
+        ]
+
+    def get_device_count(self) -> int:
+        return len(self._devices)
+
+    def get_device_info_by_index(self, i: int) -> dict[str, object]:
+        return self._devices[i]
+
+
+def test_buscar_device_encuentra_por_nombre_y_canales() -> None:
+    from traductor.flujo.adaptadores import _buscar_device
+
+    pa = _PaFake()
+    assert _buscar_device(pa, "CABLE Input", "maxOutputChannels", 2) == 1
+    assert _buscar_device(pa, "CABLE Output", "maxInputChannels", 2) == 2
+    assert _buscar_device(pa, "CABLE Input", "maxInputChannels", 2) is None  # canales distintos
+    assert _buscar_device(pa, "No existe", "maxOutputChannels", 2) is None
