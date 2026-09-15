@@ -14,9 +14,24 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from traductor.tts.backend_xtts import SR_XTTS
+
+
+class FlujoASR(Protocol):
+    """Contrato mínimo que un flujo le expone al ASR en tiempo real.
+
+    `segmento_final` devuelve el nivel de la escalera (int en outgoing) o un
+    bool (incoming): el retorno `object` cubre ambas. Parámetros positional-only
+    (`/`): los flujos nombran el texto distinto (`texto_es` / `texto_en`) y el
+    nombre no debe importar en el protocol (Hal r1 del PR #25: `Any` apagaba
+    mypy --strict sobre estos métodos).
+    """
+
+    def parcial(self, texto: str, /) -> None: ...
+    def cancelar_turno_activo(self) -> None: ...
+    def segmento_final(self, texto: str, /) -> object: ...
 
 
 def _pcm_f32_a_wav(datos: bytes, sample_rate: int) -> tuple[bytes, float]:
@@ -83,7 +98,7 @@ class AsrRealtime:  # pragma: no cover - requiere micrófono + RealtimeSTT
 
     def __init__(
         self,
-        flujo: Any,
+        flujo: FlujoASR,
         *,
         idioma: str = "es",
         input_device_index: int | None = None,
@@ -352,12 +367,12 @@ class SalidaCable:  # pragma: no cover - requiere VB-CABLE
 
         self._lock_escritura = threading.Lock()
         self._pa = pyaudio.PyAudio()
-        indice = next(
-            i
-            for i in range(self._pa.get_device_count())
-            if "CABLE Input" in str(self._pa.get_device_info_by_index(i)["name"])
-            and self._pa.get_device_info_by_index(i)["maxOutputChannels"] == 2
-        )
+        indice = _buscar_device(self._pa, "CABLE Input", "maxOutputChannels", 2)
+        if indice is None:
+            raise RuntimeError(
+                "VB-CABLE no está disponible: instala VB-CABLE (dispositivo "
+                "'CABLE Input (VB-Audio Virtual Cable)') antes de abrir la salida"
+            )
         self._stream = self._pa.open(
             format=pyaudio.paInt16,
             channels=2,
@@ -492,6 +507,17 @@ def perfil_por_defecto() -> str:
     return id_
 
 
+def _buscar_device(pa: Any, nombre_parcial: str, canales: str, valor: int) -> int | None:
+    """Índice del device de pyaudio cuyo nombre contiene `nombre_parcial` y
+    cuya entrada/salida tiene `valor` canales; None si no existe (VB-CABLE
+    ausente → el caller lanza con mensaje claro, no un StopIteration vacío)."""
+    for i in range(pa.get_device_count()):
+        info = pa.get_device_info_by_index(i)
+        if nombre_parcial in str(info["name"]) and info[canales] == valor:
+            return i
+    return None
+
+
 def indice_cable_output() -> int:  # pragma: no cover - requiere VB-CABLE
     """Índice del device de ENTRADA del cable (CABLE Output) para el flujo
     incoming: el audio REMOTO del entrevistador se captura de aquí.
@@ -503,11 +529,13 @@ def indice_cable_output() -> int:  # pragma: no cover - requiere VB-CABLE
 
     pa = pyaudio.PyAudio()
     try:
-        return next(
-            i
-            for i in range(pa.get_device_count())
-            if "CABLE Output" in str(pa.get_device_info_by_index(i)["name"])
-            and pa.get_device_info_by_index(i)["maxInputChannels"] == 2
-        )
+        indice = _buscar_device(pa, "CABLE Output", "maxInputChannels", 2)
     finally:
         pa.terminate()
+    if indice is None:
+        raise RuntimeError(
+            "VB-CABLE no está disponible: instala VB-CABLE y configura en "
+            "Meet/Zoom la SALIDA de audio en 'CABLE Input (VB-Audio Virtual "
+            "Cable)' antes de correr el flujo incoming"
+        )
+    return indice
