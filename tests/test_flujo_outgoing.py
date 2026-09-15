@@ -240,13 +240,55 @@ def test_reinicio_del_worker_que_falla_es_escalera() -> None:
     from traductor.flujo.adaptadores import TtsWorkerCliente
 
     worker = TtsWorkerCliente(python=Path("python"), directorio_salida=Path("."), perfil_id="kevin")
+    # el __init__ guarda los campos (mata los mutantes de asignación)
+    assert Path(worker._python) == Path("python")
+    assert worker._directorio_salida == Path(".")
+    assert str(worker._perfil_id) == "kevin"
+    assert worker._proceso is None  # el estado inicial (mutante `= ""` lo caza)
     worker._proceso = None  # fuerzo el camino de reinicio
+    llamadas: list[str] = []
 
     def iniciar_que_falla() -> None:
+        llamadas.append("iniciar")
         raise RuntimeError("el worker TTS no respondió al calentamiento (120 s)")
 
     worker.iniciar = iniciar_que_falla  # type: ignore[method-assign]
     assert worker.sintetizar("hello") is None
+    assert llamadas == ["iniciar"]  # el reinicio SÍ se intentó (no `is not None`)
+
+
+def test_reinicio_sin_proceso_y_sin_reiniciar_seteado() -> None:
+    """Si `iniciar()` no deja proceso (y no lanza), `sintetizar` devuelve
+    None sin reventar: la segunda guarda del proceso lo atrapa (mutante
+    `is not None` daría AttributeError sobre None)."""
+    from pathlib import Path
+
+    from traductor.flujo.adaptadores import TtsWorkerCliente
+
+    worker = TtsWorkerCliente(python=Path("python"), directorio_salida=Path("."), perfil_id="kevin")
+    worker._proceso = None
+    worker.iniciar = lambda: None  # type: ignore[method-assign]
+    assert worker.sintetizar("hello") is None
+
+
+def test_sintetizar_con_proceso_no_reinicia() -> None:
+    """Con el proceso vivo NO se llama a iniciar (el watchdog no reinicia en
+    frío cada turno)."""
+    import types
+    from pathlib import Path
+
+    from traductor.flujo.adaptadores import TtsWorkerCliente
+
+    worker = TtsWorkerCliente(python=Path("python"), directorio_salida=Path("."), perfil_id="kevin")
+    worker._proceso = types.SimpleNamespace(stdin=None, stdout=None)
+    llamadas: list[str] = []
+
+    def iniciar_spy() -> None:
+        llamadas.append("iniciar")
+
+    worker.iniciar = iniciar_spy  # type: ignore[method-assign]
+    assert worker.sintetizar("hello") is None
+    assert llamadas == []
 
 
 def test_validar_arranque_pasa_con_traduccion_sana() -> None:

@@ -37,7 +37,7 @@
 | Recuperación (watchdog) | 0 reinicios necesarios (el worker no falló — el camino no se ejercitó) | ⚠️ no ejercitado |
 
 **Causas atribuidas del cierre de turno (por etapa, p95 acumulado):**
-- ASR 501 ms · traducción 888 ms · **worker 9292 ms** — el worker del flujo usa la SÍNTESIS COMPLETA (`backend.sintetizar`), no el streaming: el primer chunk medido en ADR-014 era 0.7 s; la síntesis completa co-residente tarda ~8.5 s por turno.
+- ASR 501 ms · traducción 888 ms · **worker 9292 ms** — el worker del flujo usa la SÍNTESIS COMPLETA (`backend.sintetizar`), no el streaming: el primer chunk medido en ADR-014 era 0.7 s; la síntesis completa co-residente tarda ~8.5 s por turno. (RSS del worker leído de SU pid — corregido en la revisión #23; antes se medía el RSS del harness.)
 - **cable 21311 ms** — la escritura al cable bloquea hasta que el audio termina de sonar (la duración de la reproducción no es latencia; el cierre del turno debe ser el primer sample audible, 0.2 s).
 - Sin degradación entre tramos: el problema es el DISEÑO del flujo actual, no una fuga.
 
