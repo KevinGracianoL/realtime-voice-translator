@@ -14,7 +14,7 @@ de voz; XTTS las usa para clonar el timbre en el idioma de salida.
 from __future__ import annotations
 
 from array import array
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from typing import Any
 
 from traductor.tts.modelos import AudioResult, Salud, VoiceProfile
@@ -34,12 +34,25 @@ def pcm_a_audio_result(muestras: Sequence[float], sr: int = SR_XTTS) -> AudioRes
     return AudioResult(datos=datos, formato="pcm_f32le", duracion_s=float(len(muestras)) / sr)
 
 
+def _chunk_a_muestras(chunk: Any) -> list[float]:
+    """Chunk del generador XTTS (tensor torch o ndarray float32) → list[float].
+
+    Pura y testeable sin el motor ni numpy en CI: acepta listas, ndarrays o
+    tensores; aplana (reshape(-1)) y convierte a float.
+    """
+    if hasattr(chunk, "detach") and hasattr(chunk, "cpu"):  # tensor torch
+        chunk = chunk.detach().cpu()
+    plano = chunk.reshape(-1) if hasattr(chunk, "reshape") else chunk
+    return [float(v) for v in plano]
+
+
 class BackendXtts:
     """TTSBackend sobre XTTS-v2. `idioma_salida`: "en" para ES→EN (ADR-015)."""
 
     def __init__(self, idioma_salida: str = "en") -> None:
         self._idioma_salida = idioma_salida
         self._tts: Any | None = None
+        self._latentes_por_perfil: dict[str, tuple[Any, Any]] = {}
 
     def _cargar(self) -> Any:  # pragma: no cover - requiere coqui_tts + GPU
         """Carga el modelo una sola vez (lazy). Raises: RuntimeError."""
@@ -71,6 +84,35 @@ class BackendXtts:
             split_sentences=True,
         )
         return pcm_a_audio_result(wav, SR_XTTS)
+
+    def sintetizar_stream(  # pragma: no cover - requiere coqui_tts + GPU
+        self, texto: str, perfil: VoiceProfile
+    ) -> Iterator[AudioResult]:
+        """Sintetiza en chunks (`inference_stream`): el primero llega en ~0.7 s.
+
+        Las latentes de condicionamiento se calculan UNA vez por perfil y se
+        cachean (ADR-011: 756 ms que no entran al presupuesto por turno); el
+        generador se cierra al terminar (dejarlo abandonado mantiene estado
+        de streaming en la GPU y contamina mediciones, ver harness).
+        """
+        tts = self._cargar()
+        gpt, spk = self._latentes(perfil)
+        generador = tts.synthesizer.tts_model.inference_stream(texto, self._idioma_salida, gpt, spk)
+        try:
+            for chunk in generador:
+                yield pcm_a_audio_result(_chunk_a_muestras(chunk), SR_XTTS)
+        finally:
+            generador.close()
+
+    def _latentes(self, perfil: VoiceProfile) -> tuple[Any, Any]:  # pragma: no cover
+        """Latentes del perfil, cacheadas (una vez por id de perfil)."""
+        if perfil.id not in self._latentes_por_perfil:
+            tts = self._cargar()
+            latentes = tts.synthesizer.tts_model.get_conditioning_latents(
+                audio_path=list(perfil.muestras)
+            )
+            self._latentes_por_perfil[perfil.id] = (latentes[0], latentes[1])
+        return self._latentes_por_perfil[perfil.id]
 
     def verificar_salud(self) -> Salud:
         """Estado SIN efectos secundarios: no carga el modelo (r1 PR #16).

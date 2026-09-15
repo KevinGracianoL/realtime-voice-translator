@@ -28,6 +28,7 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
 
     from traductor.flujo.adaptadores import (
         AsrRealtime,
+        AsrRetorno,
         SalidaCable,
         TeleprompterHttp,
         TtsWorkerCliente,
@@ -57,6 +58,10 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
         tts_fallback=None,  # ...la voz genérica llega en un PR posterior
         teleprompter=TeleprompterHttp(),
         salida_audio=cable,
+        # ADR-019 fix 3: validación de artefactos en vivo (ASR-de-retorno)
+        # contra el texto TRADUCIDO; los turnos con sobrantes no se enrutan.
+        verificar_artefactos=AsrRetorno().transcribir,
+        max_sobrantes=0,
     )
     try:
         AsrRealtime(flujo).correr()

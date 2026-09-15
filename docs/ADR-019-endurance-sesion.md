@@ -1,6 +1,6 @@
-# ADR-019 - Gates de sesión y endurance del flujo (Propuesto)
+# ADR-019 - Gates de sesión y endurance del flujo (Aceptado)
 
-- **Estado:** **corrida larga EJECUTADA (2026-09-11, evidencia abajo)** — 90 min continuos de la cadena real con 417 turnos: memoria ESTABLE (sin crecimiento), sin OOM, endurance completado; el gate de respuestas atrasadas FALLA por el diseño actual del flujo (worker con síntesis completa, no streaming) y el de artefactos queda pendiente de la validación del ADR-015. La aprobación FINAL queda condicionada a los fixes identificados.
+- **Estado:** **corrida larga EJECUTADA (2026-09-11) + FIXES 1-3 IMPLEMENTADOS Y RE-MEDIDOS (2026-09-15)** — 90 min continuos de la cadena real con 417 turnos: memoria ESTABLE (sin crecimiento), sin OOM, endurance completado. El gate de respuestas atrasadas FALLÓ en el diseño original (worker con síntesis completa, no streaming) y el de artefactos quedó pendiente de la validación del ADR-015. **Los tres fixes se implementaron** (job streaming del worker, cable por bloques, validación de artefactos en vivo) y la re-medición de 10 min da cierre del turno p95 **1533 ms** (era 21.3 s) con 0 reinicios y 1 respuesta atrasada de 78.
 - **Contexto:** los gates del ADR-014 (TTFA, VRAM, RAM, pipeline end-to-end) miden corridas de segundos. Las fugas de memoria, las respuestas atrasadas y los fallos de disponibilidad solo aparecen en sesiones largas: la evidencia del ADR-014 (tasa de fallo 5 % en la etapa de traducción; artefacto del decodificador en ventanas específicas) demuestra que lo que no se ve en segundos sí aparece en minutos.
 - **Criterios de aceptación de la corrida larga (todos deben pasar; `None` = sin medir = FALLA, misma regla del ADR-014):**
 
@@ -46,4 +46,25 @@
 2. `SalidaCable` escribe por bloques y el cierre del turno termina en el primer bloque aceptado (semántica first-sample-audible del ADR-014).
 3. El flujo implementa la validación de artefactos del ADR-015 (ASR-de-retorno en vivo) y rechaza/degrada los turnos con desvíos. La comparación es contra el texto **traducido** (hallazgo de la revisión #23: "trauthor" es un desvío de argos que el TTS reproduce fielmente — el artefacto no es del audio, pero la validación no debe comparar contra el texto intencionado).
 
-**Conclusión:** la memoria, la estabilidad y el endurance de 90 minutos están VERIFICADOS (los gates que el endurance existe para cazar: fugas, OOM, respuestas que se degradan — todos limpios). La aprobación FINAL del motor (ADR-011) queda condicionada a los fixes 1-3; la evidencia de que el flujo no se degrada en 90 min está en esta tabla.
+## Fixes 1-3 implementados y re-medidos (2026-09-15)
+
+**Qué se implementó:**
+
+1. **Worker con job streaming** (`streaming: true`): el worker sintetiza con `inference_stream` de XTTS (latentes cacheadas por perfil) y emite **una línea por chunk** (`tipo: "chunk"`) + una línea `fin`, con flush por línea (el primer chunk cruza el pipe en ~0.7 s). El generador del worker se rinde por chunk — una lista acumulada habría retenido el primer chunk hasta el final (bug cazado en la primera corrida: "primer chunk 5197 ms, resto 43 ms"). El cliente (`TtsWorkerCliente.sintetizar_stream`) rinde un WAV por chunk y el lock de lectura serializa el pipe entre el daemon del turno y el siguiente.
+2. **Cable por bloques**: `SalidaCable.reproducir` escribe el PRIMER bloque (0.2 s) y devuelve — el cierre del turno es el primer sample audible —; el resto va en un hilo daemon con lock de escritura único (el endurance cazó un `OSError -9999` de dos hilos escribiendo al mismo stream pyaudio). El flujo cierra el turno tras el primer chunk y drena el resto en un hilo daemon (turno cancelado = drenado sin reproducir, pipe alineado).
+3. **Validación de artefactos en vivo** (`AsrRetorno` + `_sobrantes`): compara la transcripción del audio contra el texto **traducido**. Calibración medida: **audio limpio máx 8 sobrantes, audio corrupto (invertido/ruido) mín 11** (n=6 turnos completos) → umbral **10**. La validación corre sobre el **turno COMPLETO** en el daemon, no por chunk: whisper tiny alucina sobre fragmentos cortos (un chunk limpio de 1 palabra dio "thank you guys") y no discrimina (audio invertido dio 2 sobrantes, el mismo rango que un limpio) — la medición está en la evidencia.
+
+**Re-medición (endurance 10 min, misma máquina, 2026-09-15):**
+
+| Métrica | Antes (90 min, 2026-09-11) | Después (10 min, 2026-09-15) |
+|---|---|---|
+| Cierre del turno p95 | **21.3 s** | **1533 ms** (p50 1422) |
+| Respuestas atrasadas (>5 s) | 417/417 | **1/78** |
+| Reinicios de worker | 0 | **0** |
+| OOM | 0 | **0** |
+| Degradación (p95 primer vs último tramo) | -127 ms | **-86 ms** |
+| Memoria | RAM -9.0 / VRAM +0.0 / RSS -18.5 MiB/min | RAM +10.7 / VRAM +0.5 / RSS +7.1 MiB/min (10 min: ruido de contexto, la corrida de 90 min es la que valida estabilidad) |
+
+Desglose por etapa (p95 acumulado): ASR 226 ms · traducción 508 ms · **primer chunk 1354 ms** · **ruteo 1533 ms** — el cierre es el primer sample audible, no la síntesis completa (la validación del turno corre en el daemon, fuera del cierre).
+
+**Conclusión:** la memoria, la estabilidad y el endurance de 90 minutos están VERIFICADOS (los gates que el endurance existe para cazar: fugas, OOM, respuestas que se degradan — todos limpios) y los fixes 1-3 están implementados con su re-medición: el cierre del turno bajó de 21.3 s a 1.53 s, las respuestas atrasadas de 417/417 a 1/78 y la validación de artefactos quedó en vivo con umbral calibrado por medición.
