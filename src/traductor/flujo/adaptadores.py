@@ -16,7 +16,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from traductor.flujo.outgoing import FlujoOutgoing
 from traductor.tts.backend_xtts import SR_XTTS
 
 
@@ -64,20 +63,36 @@ class AsrRetorno:
 
 
 class AsrRealtime:  # pragma: no cover - requiere micrófono + RealtimeSTT
-    """Micrófono → segmentos: los PARCIALES cancelan y van a pantalla; los
-    FINALES se procesan en un hilo worker por turno.
+    """Entrada de audio → segmentos: los PARCIALES cancelan y van a pantalla;
+    los FINALES se procesan en un hilo worker por turno.
+
+    Sirve para AMBAS direcciones del ADR-015:
+    - outgoing (hablar): el micrófono físico, `idioma="es"` (default).
+    - incoming (escuchar): el audio REMOTO del entrevistador llega por el
+      cable virtual (CABLE Input como salida de Meet/Zoom), capturado con
+      `input_device_index` del CABLE Output, `idioma="en"`.
 
     RealtimeSTT ya integra VAD/endpointing y entrega sus callbacks desde SUS
     propios hilos (revisión #22: el invariante de hilo único era falso).
-    - `_parcial`: el usuario volvió a hablar → se CANCELA la síntesis del
+    - `_parcial`: el usuario/entrevistador volvió a hablar → se CANCELA el
     turno anterior en vuelo (`cancelar_turno_activo`) y el parcial va a
     pantalla. Sin esto, la cancelación del ADR-015 era código muerto.
-    - `_final`: el turno corre en un hilo daemon para que el micrófono siga
+    - `_final`: el turno corre en un hilo daemon para que la entrada siga
     fluyendo y un nuevo segmento pueda cancelarlo (cola de tamaño 1).
     """
 
-    def __init__(self, flujo: FlujoOutgoing) -> None:
+    def __init__(
+        self,
+        flujo: Any,
+        *,
+        idioma: str = "es",
+        input_device_index: int | None = None,
+        etiqueta: str = "",
+    ) -> None:
         self._flujo = flujo
+        self._idioma = idioma
+        self._input_device_index = input_device_index
+        self._etiqueta = etiqueta or f"Flujo {idioma}"
 
     def _parcial(self, texto: str) -> None:
         self._flujo.cancelar_turno_activo()
@@ -93,12 +108,13 @@ class AsrRealtime:  # pragma: no cover - requiere micrófono + RealtimeSTT
 
         grabador = AudioToTextRecorder(
             model="tiny",
-            language="es",
+            language=self._idioma,
             device="cuda",
             compute_type="int8",
+            input_device_index=self._input_device_index,
             on_realtime_transcription_update=self._parcial,
         )
-        print("Flujo outgoing listo: habla en español. Ctrl+C para salir.")
+        print(f"{self._etiqueta} listo: ctrl+C para salir.")
         while True:
             grabador.text(self._final)
 
@@ -474,3 +490,24 @@ def perfil_por_defecto() -> str:
     enrolamiento previo o 'kevin' si no hay ninguno."""
     id_ = os.environ.get("TRADUCTOR_PERFIL_ID", "kevin")
     return id_
+
+
+def indice_cable_output() -> int:  # pragma: no cover - requiere VB-CABLE
+    """Índice del device de ENTRADA del cable (CABLE Output) para el flujo
+    incoming: el audio REMOTO del entrevistador se captura de aquí.
+
+    En Meet/Zoom se configura CABLE Input como dispositivo de SALIDA de audio
+    (el audio remoto entra al cable) y este flujo lee de CABLE Output.
+    """
+    import pyaudio
+
+    pa = pyaudio.PyAudio()
+    try:
+        return next(
+            i
+            for i in range(pa.get_device_count())
+            if "CABLE Output" in str(pa.get_device_info_by_index(i)["name"])
+            and pa.get_device_info_by_index(i)["maxInputChannels"] == 2
+        )
+    finally:
+        pa.terminate()
