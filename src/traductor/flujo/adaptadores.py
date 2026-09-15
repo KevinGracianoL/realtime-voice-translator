@@ -38,6 +38,31 @@ def _pcm_f32_a_wav(datos: bytes, sample_rate: int) -> tuple[bytes, float]:
     return buf.getvalue(), float(len(int16)) / sample_rate
 
 
+class AsrRetorno:
+    """ASR-de-retorno para validar el audio sintetizado (ADR-019, fix 3).
+
+    Transcribe un WAV en inglés (el idioma de salida del flujo) con el mismo
+    modelo tiny del micrófono. El WAV se pasa como `BytesIO` (revisión #23):
+    faster-whisper con ndarray NO resamplea (asume 16 k) y oiría el audio a
+    2/3 de velocidad.
+    """
+
+    def __init__(self) -> None:  # pragma: no cover - requiere modelo
+        from faster_whisper import WhisperModel
+
+        self._whisper = WhisperModel("tiny", device="cuda", compute_type="int8_float16")
+
+    def transcribir(self, audio: bytes) -> str | None:  # pragma: no cover
+        """Texto en inglés del WAV; None si el modelo no está disponible."""
+        import io
+
+        try:
+            segmentos, _ = self._whisper.transcribe(io.BytesIO(audio), language="en")
+            return " ".join(s.text for s in segmentos)
+        except Exception:
+            return None
+
+
 class AsrRealtime:  # pragma: no cover - requiere micrófono + RealtimeSTT
     """Micrófono → segmentos: los PARCIALES cancelan y van a pantalla; los
     FINALES se procesan en un hilo worker por turno.
@@ -83,6 +108,11 @@ class TtsWorkerCliente:  # pragma: no cover - requiere venv-tts + modelo
 
     Lanza `worker_tts_boot.py` con el python del venv del TTS (que es donde
     vive coqui-tts, ADR-011), envía un job y lee el WAV de salida.
+
+    JOB STREAMING (ADR-019): `sintetizar_stream` envía un job con
+    `streaming: true` y rinde un WAV POR CHUNK — el PRIMERO llega en ~0.7 s y
+    el flujo cierra el turno con él; los chunks siguientes llegan mientras el
+    worker sigue sintetizando (el cierre ya no espera la síntesis completa).
     """
 
     def __init__(self, *, python: Path, directorio_salida: Path, perfil_id: str) -> None:
@@ -90,8 +120,12 @@ class TtsWorkerCliente:  # pragma: no cover - requiere venv-tts + modelo
         self._directorio_salida = directorio_salida
         self._perfil_id = perfil_id
         self._proceso: Any | None = None
+        self._lock_lectura: Any = None  # un solo lector del pipe a la vez
 
     def iniciar(self) -> None:
+        import threading
+
+        self._lock_lectura = threading.Lock()
         boot = Path(__file__).resolve().parents[3] / "scripts" / "worker_tts_boot.py"
         # el python viene del venv de la máquina, el script es del repo y el
         # directorio es un tempdir propio: ninguna entrada de red ni no
@@ -160,6 +194,65 @@ class TtsWorkerCliente:  # pragma: no cover - requiere venv-tts + modelo
         resultado = json.loads(linea)
         if not resultado["ok"]:
             return None
+        return self._leer_wav(resultado)
+
+    def sintetizar_stream(self, texto_en: str) -> Any | None:
+        """Job streaming → generador de WAVs por chunk (ADR-019, fix 1).
+
+        El PRIMER `next()` devuelve el primer chunk (~0.7 s de síntesis + el
+        wrap a WAV); los siguientes llegan mientras el worker sigue
+        sintetizando; `StopIteration` al recibir el `fin`. None si el worker
+        falló o se trabó (escalera del flujo).
+        """
+        if self._proceso is None:
+            try:
+                self.iniciar()  # reinicio tras un trabón (ADR-015)
+            except RuntimeError:
+                return None  # el reinicio falló: escalera (revisión #23)
+        if self._proceso is None or self._proceso.stdin is None:
+            return None
+        job = {
+            "texto": texto_en,
+            "perfil_id": self._perfil_id,
+            "salida": "turno",
+            "streaming": True,
+        }
+        try:
+            self._proceso.stdin.write(json.dumps(job) + "\n")
+            self._proceso.stdin.flush()
+        except OSError:
+            self.cerrar()  # pipe muerto (el worker cayó): escalera, se reinicia
+            return None
+
+        def _chunks() -> Any:
+            while True:
+                try:
+                    linea = self._leer_resultado()
+                except ValueError:
+                    return  # pipe cerrado (worker terminado): fin del stream
+                if linea is None:
+                    self.cerrar()  # el worker se trabó a mitad del stream
+                    return
+                if not linea.strip():
+                    self.cerrar()
+                    return
+                resultado = json.loads(linea)
+                if not resultado["ok"]:
+                    return
+                if resultado["tipo"] == "fin":
+                    return
+                wav = self._leer_wav(resultado)
+                if wav is None:
+                    return  # formato desconocido: escalera
+                yield wav
+
+        return _chunks()
+
+    def _leer_wav(self, resultado: dict[str, Any]) -> tuple[bytes, float, str] | None:
+        """WAV del resultado del worker (pcm_f32le → WAV, ADR-011/013).
+
+        None si el formato no se conoce (escalera del flujo).
+        """
         ruta = self._directorio_salida / resultado["salida"]
         datos = ruta.read_bytes()
         formato = resultado["formato"]
@@ -178,23 +271,32 @@ class TtsWorkerCliente:  # pragma: no cover - requiere venv-tts + modelo
         return None  # formato desconocido: escalera
 
     def _leer_resultado(self, timeout_s: float = 30.0) -> str | None:
-        """readline con timeout (None si el worker no respondió)."""
+        """readline con timeout (None si el worker no respondió).
+
+        El pipe es UN recurso compartido: el hilo daemon del streaming y el
+        siguiente turno lo leen — el lock serializa (un lector a la vez, sin
+        robarse líneas del otro).
+        """
         import threading
 
         if self._proceso is None or self._proceso.stdout is None:
             return None
-        linea: list[str] = []
-        stdout = self._proceso.stdout
+        lock = self._lock_lectura
+        if lock is None:
+            return None  # sin worker arrancado: nada que leer
+        with lock:
+            linea: list[str] = []
+            stdout = self._proceso.stdout
 
-        def leer() -> None:
-            linea.append(stdout.readline())
+            def leer() -> None:
+                linea.append(stdout.readline())
 
-        hilo = threading.Thread(target=leer, daemon=True)
-        hilo.start()
-        hilo.join(timeout=timeout_s)
-        if hilo.is_alive():
-            return None
-        return linea[0] if linea else None
+            hilo = threading.Thread(target=leer, daemon=True)
+            hilo.start()
+            hilo.join(timeout=timeout_s)
+            if hilo.is_alive():
+                return None
+            return linea[0] if linea else None
 
     @property
     def pid(self) -> int | None:
@@ -211,18 +313,28 @@ class SalidaCable:  # pragma: no cover - requiere VB-CABLE
     """Escribe el WAV del TTS a CABLE Input (el audio sintetizado NO vuelve
     al micrófono físico: la ruta de salida es explícitamente el cable).
 
+    ADR-019, fix 2: escribe POR BLOQUES — `reproducir` devuelve cuando el
+    PRIMER bloque se acepta (el primer sample es audible) y el resto del
+    audio se escribe en un hilo daemon. El cierre del turno ya no espera la
+    reproducción completa (la duración del audio NO es latencia).
+
     `abrir()`/`cerrar()` permiten mantener el stream abierto entre turnos
     (abrir por turno paga ~1-3 s de overhead en Windows).
     """
 
-    def __init__(self, rate_cable: int = 48000) -> None:
+    def __init__(self, rate_cable: int = 48000, bloque_s: float = 0.2) -> None:
         self._rate_cable = rate_cable
+        self._bloque_s = bloque_s
         self._pa: Any | None = None
         self._stream: Any | None = None
+        self._lock_escritura: Any = None  # un solo escritor del stream a la vez
 
     def abrir(self) -> None:
+        import threading
+
         import pyaudio
 
+        self._lock_escritura = threading.Lock()
         self._pa = pyaudio.PyAudio()
         indice = next(
             i
@@ -248,10 +360,54 @@ class SalidaCable:  # pragma: no cover - requiere VB-CABLE
             self._pa = None
 
     def reproducir(self, audio: bytes, duracion_s: float, nombre: str) -> None:
+        """Primer bloque al stream y devuelve; el resto en un hilo daemon.
+
+        El primer sample audible es el momento del primer bloque aceptado:
+        el cierre del turno (ADR-019) es ESE momento, no la duración del
+        audio. Sin stream (no abierto): no se reproduce (escalera).
+        """
+        stream = self._stream
+        lock = self._lock_escritura
+        if stream is None or lock is None:
+            return  # sin stream: no reproducir (escalera del cable)
+        pcm = self._audio_a_pcm_cable(audio)
+        # bloque en BYTES: rate * 2 canales * 2 bytes (int16) * segundos
+        bloque = max(1, int(self._rate_cable * 4 * self._bloque_s))
+        bloques = [pcm[i : i + bloque] for i in range(0, len(pcm), bloque)]
+        if not bloques:
+            return  # audio vacío: nada que reproducir
+        if len(bloques) == 1:
+            # un solo bloque: no hay nada que encolar (mutante `>= 1` lo caza)
+            with lock:
+                stream.write(bloques[0])
+            return
+        restantes = bloques[1:]
+        with lock:  # un solo escritor: el daemon del turno anterior y el
+            # primer bloque del turno nuevo NO pueden escribir a la vez
+            stream.write(bloques[0])  # PRIMER bloque: cierre del turno
+        self._lanzar_resto(stream, lock, restantes)
+
+    def _lanzar_resto(self, stream: Any, lock: Any, restantes: list[bytes]) -> Any:
+        """Hilo daemon que escribe el resto (devuelto: el test verifica que
+        es daemon y que el cierre del turno no espera la reproducción)."""
+        import threading
+
+        hilo = threading.Thread(
+            target=self._escribir_resto, args=(stream, lock, restantes), daemon=True
+        )
+        hilo.start()
+        return hilo
+
+    def _escribir_resto(self, stream: Any, lock: Any, restantes: list[bytes]) -> None:
+        for bloque in restantes:
+            with lock:
+                stream.write(bloque)
+
+    def _audio_a_pcm_cable(self, audio: bytes) -> bytes:
+        """WAV → PCM int16 estéreo 48 kHz para el cable (resample lineal)."""
         import io
 
         import numpy as np
-        import pyaudio
         import soundfile as sf
 
         datos, sr = sf.read(io.BytesIO(audio), dtype="float32")
@@ -266,29 +422,7 @@ class SalidaCable:  # pragma: no cover - requiere VB-CABLE
         alpha = (pos - i0).astype(np.float32)
         res = mono[i0] * (1 - alpha) + mono[i1] * alpha
         stereo = np.repeat(res, 2)
-        pcm = (np.clip(stereo, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
-        if self._stream is not None:
-            self._stream.write(pcm)  # stream persistente (abrir()/cerrar())
-            return
-
-        pa = pyaudio.PyAudio()
-        indice = next(
-            i
-            for i in range(pa.get_device_count())
-            if "CABLE Input" in str(pa.get_device_info_by_index(i)["name"])
-            and pa.get_device_info_by_index(i)["maxOutputChannels"] == 2
-        )
-        stream = pa.open(
-            format=pyaudio.paInt16,
-            channels=2,
-            rate=self._rate_cable,
-            output=True,
-            output_device_index=indice,
-        )
-        stream.write(pcm)
-        stream.stop_stream()
-        stream.close()
-        pa.terminate()
+        return bytes((np.clip(stereo, -1.0, 1.0) * 32767).astype(np.int16).tobytes())
 
 
 class TeleprompterHttp:  # pragma: no cover - requiere el UI corriendo

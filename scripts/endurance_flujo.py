@@ -1,9 +1,13 @@
 """Endurance de 90 minutos del flujo outgoing_es_to_en (ADR-019).
 
 Ejercita la CADENA REAL completa — faster-whisper es → Argos → worker XTTS
-(proceso aparte, venv-tts) → VB-CABLE — alimentada con los segmentos VAD de
-una grabación (el micrófono real no puede hablar 90 minutos; la entrada de
-mic es la misma etapa ASR, con el mismo config del flujo).
+(proceso aparte, venv-tts, JOB STREAMING) → VB-CABLE — alimentada con los
+segmentos VAD de una grabación (el micrófono real no puede hablar 90 minutos;
+la entrada de mic es la misma etapa ASR, con el mismo config del flujo).
+
+CIERRE DEL TURNO con los fixes 1-2 del ADR-019: el worker sintetiza por
+chunks (el primero llega en ~0.7 s) y el cable escribe por bloques — el
+turno cierra cuando el PRIMER chunk es audible, no cuando el audio termina.
 
 Gates del ADR-019 que evalúa y reporta:
 - endurance: completa 90 minutos sin cuelgues;
@@ -12,8 +16,9 @@ Gates del ADR-019 que evalúa y reporta:
   compara el primer tramo contra el último y la pendiente de la serie;
 - sin respuestas atrasadas: p95 del cierre del turno del primer tramo vs el
   último (degradación) y conteo de turnos > 5 s;
-- sin artefactos de palabras: ASR-de-retorno sobre una muestra del audio
-  sintetizado (palabras faltantes/sobrantes contra el texto intencionado);
+- sin artefactos de palabras: ASR-de-retorno sobre el primer chunk (fix 3:
+  palabras sobrantes contra el texto TRADUCIDO — 'trauthor' es de la
+  traducción, no del audio);
 - recuperación: si el worker se traba, se reinicia y se cuenta (watchdog,
   ADR-015) — el flujo no se cae.
 
@@ -23,6 +28,7 @@ como evidencia en el ADR-019.
 
 from __future__ import annotations
 
+import io
 import os
 import sys
 import tempfile
@@ -66,6 +72,27 @@ def _ventanas_vad(whisper: Any, muestras: Any, sr: int) -> list[Any]:  # pragma:
     return ventanas
 
 
+def _concatenar_wav(audios: list[bytes]) -> bytes:  # pragma: no cover
+    """Une los chunks WAV del turno (mismo formato del flujo real)."""
+    import io
+    import wave
+
+    frames = bytearray()
+    tasa = 0
+    for a in audios:
+        with wave.open(io.BytesIO(a), "rb") as w:
+            if tasa == 0:
+                tasa = w.getframerate()
+            frames.extend(w.readframes(w.getnframes()))
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(tasa)
+        w.writeframes(bytes(frames))
+    return buf.getvalue()
+
+
 def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -81,6 +108,7 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
         perfil_por_defecto,
         python_venv_tts,
     )
+    from traductor.flujo.outgoing import _sobrantes  # fuente única de la regla
     from traductor.hardware.cuda import vram_ocupada_mib
     from traductor.traduccion.argos import traducir
 
@@ -109,10 +137,10 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
     cable.abrir()
 
     latencias: list[float] = []
-    etapas: dict[str, list[float]] = {"asr": [], "traduccion": [], "worker": [], "cable": []}
+    etapas: dict[str, list[float]] = {"asr": [], "traduccion": [], "primer_chunk": [], "ruteo": []}
     reinicios = 0
     oom = 0
-    artefactos = {"turnos": 0, "faltantes": 0, "sobrantes": 0}
+    artefactos = {"turnos": 0, "sobrantes": 0, "turnos_con_sobrantes": 0}
     muestras_ram: list[tuple[float, float]] = []  # (t_min, MiB)
     muestras_vram: list[tuple[float, float]] = []
     muestras_worker_rss: list[tuple[float, float]] = []
@@ -121,32 +149,23 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
     t_inicio = time.perf_counter()
     limite = t_inicio + DURACION_MIN * 60
 
-    def _normalizar(texto: str) -> str:
-        return " ".join("".join(c for c in texto.lower() if c.isalnum() or c.isspace()).split())
-
-    def _verificar_artefactos(audio: bytes, intencion: str) -> None:
-        """ASR-de-retorno: palabras faltantes/sobrantes del audio sintetizado.
-
-        Se pasa el WAV como BytesIO (revisión #23): faster-whisper con
-        ndarray NO resamplea (asume 16 k) y oiría el audio a 2/3 de
-        velocidad — los desvíos medidos eran en parte el instrumento.
-        """
-        import io
-
+    def _verificar_artefactos(audio: bytes, texto_en: str) -> None:
+        """ASR-de-retorno sobre el PRIMER chunk (fix 3): palabras SOBRANTES
+        contra el texto traducido (BytesIO — revisión #23: ndarray a 24 kHz
+        no resamplea y oiría el audio a 2/3 de velocidad)."""
         segs, _ = whisper.transcribe(io.BytesIO(audio), language="en")
-        retorno = _normalizar(" ".join(s.text for s in segs)).split()
-        esperado = _normalizar(intencion).split()
-        faltan = [w for w in esperado if w not in retorno]
-        sobran = [w for w in retorno if w not in esperado]
+        retorno = " ".join(s.text for s in segs)
+        sobrantes = _sobrantes(retorno, texto_en)
         artefactos["turnos"] += 1
-        artefactos["faltantes"] += len(faltan)
-        artefactos["sobrantes"] += len(sobran)
+        artefactos["sobrantes"] += len(sobrantes)
+        if sobrantes:
+            artefactos["turnos_con_sobrantes"] += 1
 
     print(
         f"Endurance {DURACION_MIN} min iniciado: {len(ventanas)} ventanas VAD, "
         f"worker pid en curso, cable listo."
     )
-    print("Muestreo de memoria cada 60 s; ASR-de-retorno cada 20 turnos.")
+    print("Muestreo de memoria cada 60 s; ASR-de-retorno del turno COMPLETO (fix 3).")
     siguiente_memoria = time.time() + 60
     while time.perf_counter() < limite:
         t_turno = time.perf_counter()
@@ -156,21 +175,42 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
             etapas["asr"].append((time.perf_counter() - t_turno) * 1000.0)
             texto_en = traducir(texto_es, "es", "en")
             etapas["traduccion"].append((time.perf_counter() - t_turno) * 1000.0)
-            salida = worker.sintetizar(texto_en)
-            if salida is None:
+            chunks = worker.sintetizar_stream(texto_en)
+            if chunks is None:
                 reinicios += 1  # el worker se trabó/falló: escalera (watchdog)
                 continue
-            audio, duracion_s, _nombre = salida
-            etapas["worker"].append((time.perf_counter() - t_turno) * 1000.0)
+            try:
+                primero = next(chunks)
+            except StopIteration:
+                reinicios += 1  # stream vacío: escalera
+                continue
+            audio, duracion_s, _nombre = primero
+            etapas["primer_chunk"].append((time.perf_counter() - t_turno) * 1000.0)
             cable.reproducir(audio, duracion_s, "xtts-kevin")
-            etapas["cable"].append((time.perf_counter() - t_turno) * 1000.0)
+            etapas["ruteo"].append((time.perf_counter() - t_turno) * 1000.0)
             latencia = (time.perf_counter() - t_turno) * 1000.0
             latencias.append(latencia)
             turnos += 1
             if latencia > 5000.0:
                 atrasadas += 1
-            if turnos % 20 == 0:
-                _verificar_artefactos(audio, texto_en)
+            # el flujo real drena el resto en un hilo daemon (pipe alineado)
+            # y valida el turno COMPLETO al terminar (fix 3, fuera del cierre).
+            # El endurance ESPERA al drenado antes del siguiente turno: en una
+            # entrevista el usuario escucha la respuesta — el worker queda
+            # OCIOSO, como en el flujo real.
+            import threading
+
+            audios_turno: list[bytes] = [audio]
+
+            def drenar_resto(generador: Any = chunks, destino: list[bytes] = audios_turno) -> None:
+                for chunk in generador:
+                    destino.append(chunk[0])
+                    cable.reproducir(*chunk)
+
+            hilo_drenado = threading.Thread(target=drenar_resto, daemon=True)
+            hilo_drenado.start()
+            hilo_drenado.join()  # el siguiente turno arranca con el worker libre
+            _verificar_artefactos(_concatenar_wav(audios_turno), texto_en)
         except Exception as exc:  # noqa: BLE001 - el bucle no muere por un turno
             if "out of memory" in str(exc).lower():
                 oom += 1
