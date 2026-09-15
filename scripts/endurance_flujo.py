@@ -31,6 +31,24 @@ from pathlib import Path
 from typing import Any
 
 
+def _rss_arbol(pid: int) -> float:
+    """RSS del proceso y de todos sus hijos (el python.exe del venv es un
+    redirector en 3.12+: el worker real es su hijo)."""
+    import psutil
+
+    try:
+        proceso = psutil.Process(pid)
+    except psutil.NoSuchProcess:
+        return 0.0
+    total = proceso.memory_info().rss
+    for hijo in proceso.children(recursive=True):
+        try:
+            total += hijo.memory_info().rss
+        except psutil.NoSuchProcess:
+            continue
+    return float(total)
+
+
 def _duracion_voz(wav: Path) -> float:  # pragma: no cover - máquina
     import soundfile as sf
 
@@ -68,6 +86,11 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
 
     DURACION_MIN = float(os.environ.get("ENDURANCE_MIN", "90.0"))
     wav = Path(__file__).resolve().parents[1] / "scripts" / "audio" / "voz_kevin.wav"
+    if not wav.is_file():
+        raise RuntimeError(
+            f"falta la voz de referencia del endurance: {wav} (perfiles/ está "
+            "gitignored — enróla el perfil 'kevin' primero, ver ADR-013)"
+        )
     muestras, sr = sf.read(str(wav), dtype="float32")
 
     whisper = WhisperModel("tiny", device="cuda", compute_type="int8_float16")
@@ -159,11 +182,7 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
             vram = vram_ocupada_mib(torch.cuda)
             muestras_vram.append((minuto, vram if vram is not None else 0.0))
             pid_worker = worker.pid
-            rss = (
-                psutil.Process(pid_worker).memory_info().rss / 1024**2
-                if pid_worker is not None
-                else 0.0
-            )
+            rss = _rss_arbol(pid_worker) / 1024**2 if pid_worker is not None else 0.0
             muestras_worker_rss.append((minuto, rss))
             siguiente_memoria = time.time() + 60
 

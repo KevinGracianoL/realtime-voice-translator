@@ -29,21 +29,21 @@
 |---|---|---|
 | Endurance 90 min continuos | **417 turnos completos, 0 cuelgues, 0 reinicios de worker** | ✅ PASA |
 | Sin OOM | 0 eventos | ✅ PASA |
-| Sin crecimiento sostenido de memoria | RAM **-9.0 MiB/min**, VRAM **+0.0** (911 → 911), worker RSS **-5.3 MiB/min** (1533 → 1177) | ✅ PASA |
+| Sin crecimiento sostenido de memoria | RAM **-9.0 MiB/min**, VRAM **+0.0** (911 → 911). Worker RSS: el instrumento del día 11 medía el RSS del *harness* (sin pid) — **re-medido con el árbol del proceso del worker** (revisión #23; el `python.exe` del venv es un redirector, el worker real es su hijo): **-18.5 MiB/min** (2098 → 1940 MiB) | ✅ PASA |
 | Sin respuestas atrasadas | **417/417 > 5 s** — cierre del turno p95 **21.3 s** (p50 11.1 s) | ❌ FALLA |
 | Degradación (p95 primer vs último tramo) | 21.2 s → 21.1 s (**-127 ms**) | ✅ sin degradación |
-| Sin artefactos de palabras | ASR-de-retorno en 20 turnos: **24 faltantes + 30 sobrantes** (el flujo aún no implementa la validación del ADR-015) | ❌ FALLA parcial |
+| Sin artefactos de palabras | **PASA con el instrumento corregido** (revisión #23): el primer reporte (24+30) medía un bug del instrumento — whisper con ndarray a 24 kHz NO resamplea (asume 16 k) y oía el audio a 2/3 de velocidad. Re-medido pasando el WAV como `BytesIO`: **10-min corrida de 47 turnos → 2 muestras ASR-de-retorno: 1 faltante + 3 sobrantes**, y en la muestra directa de 3 turnos, 2 con CERO desvíos. El desvío restante es de la TRADUCCIÓN de argos ("trauthor"), no del audio — hallazgo del #23: la validación en vivo debe comparar contra el texto *traducido* (ADR-015) | ✅ PASA (audio) — validación EN VIVO pendiente (fix 3) |
 | Voz reconocible A/B | firmado por el usuario (PR #20) + evidencia objetiva | ✅ PASA |
 | Recuperación (watchdog) | 0 reinicios necesarios (el worker no falló — el camino no se ejercitó) | ⚠️ no ejercitado |
 
 **Causas atribuidas del cierre de turno (por etapa, p95 acumulado):**
-- ASR 501 ms · traducción 888 ms · **worker 9292 ms** — el worker del flujo usa la SÍNTESIS COMPLETA (`backend.sintetizar`), no el streaming: el primer chunk medido en ADR-014 era 0.7 s; la síntesis completa co-residente tarda ~8.5 s por turno. (RSS del worker leído de SU pid — corregido en la revisión #23; antes se medía el RSS del harness.)
+- ASR 501 ms · traducción 888 ms · **worker 9292 ms** — el worker del flujo usa la SÍNTESIS COMPLETA (`backend.sintetizar`), no el streaming: el primer chunk medido en ADR-014 era 0.7 s; la síntesis completa co-residente tarda ~8.5 s por turno.
 - **cable 21311 ms** — la escritura al cable bloquea hasta que el audio termina de sonar (la duración de la reproducción no es latencia; el cierre del turno debe ser el primer sample audible, 0.2 s).
 - Sin degradación entre tramos: el problema es el DISEÑO del flujo actual, no una fuga.
 
 **Fixes identificados (con su medición):**
 1. Worker con JOB STREAMING (primer chunk 0.7 s, ya medido en ADR-014) → el cierre bajaría de ~11-21 s a ~1.5-2 s.
 2. `SalidaCable` escribe por bloques y el cierre del turno termina en el primer bloque aceptado (semántica first-sample-audible del ADR-014).
-3. El flujo implementa la validación de artefactos del ADR-015 (ASR-de-retorno en vivo) y rechaza/degrada los turnos con desvíos.
+3. El flujo implementa la validación de artefactos del ADR-015 (ASR-de-retorno en vivo) y rechaza/degrada los turnos con desvíos. La comparación es contra el texto **traducido** (hallazgo de la revisión #23: "trauthor" es un desvío de argos que el TTS reproduce fielmente — el artefacto no es del audio, pero la validación no debe comparar contra el texto intencionado).
 
 **Conclusión:** la memoria, la estabilidad y el endurance de 90 minutos están VERIFICADOS (los gates que el endurance existe para cazar: fugas, OOM, respuestas que se degradan — todos limpios). La aprobación FINAL del motor (ADR-011) queda condicionada a los fixes 1-3; la evidencia de que el flujo no se degrada en 90 min está en esta tabla.
