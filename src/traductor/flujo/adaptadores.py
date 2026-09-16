@@ -604,11 +604,17 @@ class SalidaCable:  # pragma: no cover - requiere VB-CABLE
         import pyaudio
 
         self._pa = pyaudio.PyAudio()
-        indice = _buscar_device(self._pa, "CABLE Input", "maxOutputChannels", 2)
+        # Nombre del device de SALIDA configurable por env: por defecto el
+        # VB-CABLE ("CABLE Input"); con VoiceMeeter el TTS va a su VAIO
+        # (mic de Meet/OBS) y el VB-CABLE queda SOLO para el entrevistador.
+        nombre = os.environ.get("TRADUCTOR_DEVICE_OUTGOING", "CABLE Input")
+        indice = _buscar_device(self._pa, nombre, "maxOutputChannels", 2)
         if indice is None:
             raise RuntimeError(
-                "VB-CABLE no está disponible: instala VB-CABLE (dispositivo "
-                "'CABLE Input (VB-Audio Virtual Cable)') antes de abrir la salida"
+                f"El device de salida '{nombre}' no está disponible: instala "
+                "VB-CABLE (o configura TRADUCTOR_DEVICE_OUTGOING a un device "
+                "de salida existente, p. ej. 'VoiceMeeter Input') antes de "
+                "abrir la salida"
             )
         self._stream = self._pa.open(
             format=pyaudio.paInt16,
@@ -773,19 +779,24 @@ def indice_cable_output() -> int:  # pragma: no cover - requiere VB-CABLE
     incoming: el audio REMOTO del entrevistador se captura de aquí.
 
     En Meet/Zoom se configura CABLE Input como dispositivo de SALIDA de audio
-    (el audio remoto entra al cable) y este flujo lee de CABLE Output.
+    (el audio remoto entra al cable) y este flujo lee de CABLE Output. El
+    nombre es configurable por env `TRADUCTOR_DEVICE_INCOMING` (default
+    "CABLE Output"): con dos tubos, el incoming lee SOLO el cable del
+    entrevistador, sin el TTS del outgoing mezclado.
     """
     import pyaudio
 
+    nombre = os.environ.get("TRADUCTOR_DEVICE_INCOMING", "CABLE Output")
     pa = pyaudio.PyAudio()
     try:
-        indice = _buscar_device(pa, "CABLE Output", "maxInputChannels", 2)
+        indice = _buscar_device(pa, nombre, "maxInputChannels", 2)
     finally:
         pa.terminate()
     if indice is None:
         raise RuntimeError(
-            "VB-CABLE no está disponible: instala VB-CABLE y configura en "
-            "Meet/Zoom la SALIDA de audio en 'CABLE Input (VB-Audio Virtual "
-            "Cable)' antes de correr el flujo incoming"
+            f"El device de entrada '{nombre}' no está disponible: instala "
+            "VB-CABLE y configura en Meet/Zoom la SALIDA de audio en 'CABLE "
+            "Input (VB-Audio Virtual Cable)' (o ajusta "
+            "TRADUCTOR_DEVICE_INCOMING) antes de correr el flujo incoming"
         )
     return indice

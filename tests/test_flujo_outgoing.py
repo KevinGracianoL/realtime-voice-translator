@@ -896,6 +896,176 @@ def test_buscar_device_encuentra_por_nombre_y_canales() -> None:
     assert _buscar_device(pa, "No existe", "maxOutputChannels", 2) is None
 
 
+def _registrar_nombre(recibidos: list[str], nombre: str) -> int:
+    recibidos.append(nombre)
+    return 2
+
+
+def test_indice_cable_output_usa_nombre_por_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """El incoming lee del device configurable por env TRADUCTOR_DEVICE_INCOMING
+    (default 'CABLE Output'): con dos tubos, el VB-CABLE queda SOLO para el
+    entrevistador y el incoming no capta el TTS del outgoing."""
+    import sys
+    import types
+
+    import traductor.flujo.adaptadores as mod
+
+    recibidos: list[str] = []
+
+    class _PaFake:
+        def terminate(self) -> None:
+            pass
+
+    monkeypatch.setitem(sys.modules, "pyaudio", types.SimpleNamespace(PyAudio=lambda: _PaFake()))
+
+    def _fake_buscar(pa: object, nombre: str, canales: str, valor: int) -> int | None:
+        if pa is None or (canales, valor) != ("maxInputChannels", 2):
+            return None
+        recibidos.append(nombre)
+        return 2
+
+    monkeypatch.setattr(mod, "_buscar_device", _fake_buscar)
+    monkeypatch.delenv("TRADUCTOR_DEVICE_INCOMING", raising=False)
+    assert mod.indice_cable_output() == 2
+    assert recibidos == ["CABLE Output"]
+
+    recibidos.clear()
+    monkeypatch.setenv("TRADUCTOR_DEVICE_INCOMING", "CABLE Output (B)")
+    assert mod.indice_cable_output() == 2
+    assert recibidos == ["CABLE Output (B)"]
+
+
+def test_indice_cable_output_falta_device_lanza_con_nombre(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sin el device configurado, el error NOMBRA el device buscado (para que
+    el usuario sepa cuál instalar/configurar en TRADUCTOR_DEVICE_INCOMING)."""
+    import sys
+    import types
+
+    import pytest
+
+    import traductor.flujo.adaptadores as mod
+
+    class _PaFake:
+        def terminate(self) -> None:
+            pass
+
+    monkeypatch.setitem(sys.modules, "pyaudio", types.SimpleNamespace(PyAudio=lambda: _PaFake()))
+    monkeypatch.setattr(mod, "_buscar_device", lambda *_a, **_k: None)
+    monkeypatch.setenv("TRADUCTOR_DEVICE_INCOMING", "CABLE Output (B)")
+    with pytest.raises(RuntimeError, match="CABLE Output \\(B\\)"):
+        mod.indice_cable_output()
+
+
+def test_salida_cable_abrir_usa_nombre_por_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """El outgoing escribe al device configurable por env TRADUCTOR_DEVICE_OUTGOING
+    (default 'CABLE Input'): con VoiceMeeter el TTS va al VAIO (mic de Meet/OBS)
+    y el VB-CABLE queda libre para el entrevistador. El writer+cola FIFO del
+    #28 se respeta intacto (solo cambia el nombre buscado)."""
+    import sys
+    import types
+
+    import traductor.flujo.adaptadores as mod
+
+    recibidos: list[str] = []
+
+    class _PaFake:
+        def open(self, **_kwargs: object) -> object:
+            return object()
+
+        def terminate(self) -> None:
+            pass
+
+    monkeypatch.setitem(
+        sys.modules,
+        "pyaudio",
+        types.SimpleNamespace(PyAudio=lambda: _PaFake(), paInt16=8),
+    )
+    monkeypatch.setattr(
+        mod,
+        "_buscar_device",
+        lambda _pa, nombre, _canales, _valor: _registrar_nombre(recibidos, nombre),
+    )
+    monkeypatch.delenv("TRADUCTOR_DEVICE_OUTGOING", raising=False)
+    cable = mod.SalidaCable()
+    cable.abrir()
+    assert recibidos == ["CABLE Input"]
+    assert cable._writer is not None  # el writer único del #28 sigue arrancando
+
+    recibidos.clear()
+    monkeypatch.setenv("TRADUCTOR_DEVICE_OUTGOING", "VoiceMeeter Input")
+    cable2 = mod.SalidaCable()
+    cable2.abrir()
+    assert recibidos == ["VoiceMeeter Input"]
+
+
+def test_salida_cable_abrir_falta_device_lanza_con_nombre(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sin el device configurado, el error NOMBRA el device buscado (para que
+    el usuario sepa cuál instalar/configurar en TRADUCTOR_DEVICE_OUTGOING)."""
+    import sys
+    import types
+
+    import pytest
+
+    import traductor.flujo.adaptadores as mod
+
+    monkeypatch.setitem(
+        sys.modules,
+        "pyaudio",
+        types.SimpleNamespace(PyAudio=lambda: types.SimpleNamespace(terminate=lambda: None)),
+    )
+    monkeypatch.setattr(mod, "_buscar_device", lambda *_a, **_k: None)
+    monkeypatch.setenv("TRADUCTOR_DEVICE_OUTGOING", "VoiceMeeter Input")
+    with pytest.raises(RuntimeError, match="VoiceMeeter Input"):
+        mod.SalidaCable().abrir()
+
+
+def test_salida_cable_abrir_configura_stream_cola_writer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`abrir` configura TODO lo observable: stream con los kwargs correctos
+    (device, canales, rate, formato), el PyAudio REAL se pasa a _buscar_device,
+    y arranca la cola + el writer único daemon del #28."""
+    import sys
+    import types
+
+    import traductor.flujo.adaptadores as mod
+
+    abierto: list[dict[str, object]] = []
+
+    class _PaFake:
+        def open(self, **kwargs: object) -> object:
+            abierto.append(kwargs)
+            return object()
+
+        def terminate(self) -> None:
+            pass
+
+    instancia = _PaFake()
+    monkeypatch.setitem(
+        sys.modules,
+        "pyaudio",
+        types.SimpleNamespace(PyAudio=lambda: instancia, paInt16=16),
+    )
+
+    def _fake_buscar(pa: object, nombre: str, canales: str, valor: int) -> int | None:
+        if pa is not instancia or (canales, valor) != ("maxOutputChannels", 2):
+            return None  # None -> RuntimeError de device ausente (abrir)
+        return 2
+
+    monkeypatch.setattr(mod, "_buscar_device", _fake_buscar)
+    monkeypatch.delenv("TRADUCTOR_DEVICE_OUTGOING", raising=False)
+    cable = mod.SalidaCable(rate_cable=48000)
+    cable.abrir()
+    assert abierto == [
+        {"format": 16, "channels": 2, "rate": 48000, "output": True, "output_device_index": 2}
+    ]
+    assert cable._stream is not None
+    assert cable._cola is not None
+    assert cable._writer is not None
+    assert cable._writer.is_alive()
+    assert cable._writer.daemon is True
+
+
 def test_asrrealtime_post_speech_silence_default() -> None:
     """El default de post_speech_silence_duration es 1.5 s: el párrafo hablado
     es UN solo turno. El default de RealtimeSTT (~0.6 s) lo parte en ~5 turnos y
