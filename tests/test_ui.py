@@ -37,6 +37,27 @@ def test_post_transcripcion_invalida_422() -> None:
     assert res.status_code == 422
 
 
+def test_fuente_default_es_yo() -> None:
+    """Sin 'fuente', el default es 'yo' (retrocompatible con el outgoing)."""
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as ws:
+        client.post("/api/transcripcion", json={"en": "hello", "es": "hola"})
+        data = ws.receive_text()
+        assert '"fuente":"yo"' in data.replace(" ", "")
+
+
+def test_fuente_entrevistador_se_propaga() -> None:
+    """El flujo incoming manda fuente='entrevistador' y llega al WS."""
+    client = TestClient(app)
+    with client.websocket_connect("/ws") as ws:
+        client.post(
+            "/api/transcripcion",
+            json={"en": "your experience", "es": "tu experiencia", "fuente": "entrevistador"},
+        )
+        data = ws.receive_text()
+        assert '"fuente":"entrevistador"' in data.replace(" ", "")
+
+
 def test_broadcast_descarta_ws_muerto() -> None:
     """WS que falla en send_text debe ser removido de conexiones."""
     from unittest.mock import AsyncMock

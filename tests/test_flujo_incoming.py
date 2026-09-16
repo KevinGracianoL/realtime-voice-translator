@@ -492,3 +492,26 @@ def test_vad_cierre_resetea_estado_y_contador_persiste() -> None:
         )
     numero2, fragmento2 = cola.get()
     assert (numero2, len(fragmento2)) == (1, 4)
+
+
+def test_alucinacion_no_llega_al_teleprompter() -> None:
+    """Bug 'whisper habla por mí': una frase fantasma NO abre turno ni se muestra."""
+    flujo, teleprompter = _flujo()
+    # frase fantasma típica del modelo tiny sobre silencio/eco del cable
+    assert flujo.segmento_final("Thank you for watching this video") is False
+    assert teleprompter.finales == []
+    # el contador de turnos no avanzó: la siguiente frase REAL es el turno 1
+    assert flujo.segmento_final("what is your experience with distributed systems") is True
+    assert teleprompter.finales == [
+        (
+            "ES(what is your experience with distributed systems)",
+            "what is your experience with distributed systems",
+        )
+    ]
+
+
+def test_habla_real_con_thank_you_dentro_si_se_muestra() -> None:
+    """Una intervención real que CONTIENE 'thank you' no se filtra."""
+    flujo, teleprompter = _flujo()
+    assert flujo.segmento_final("thank you for taking the time to meet me today") is True
+    assert len(teleprompter.finales) == 1
