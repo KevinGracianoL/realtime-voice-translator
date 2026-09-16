@@ -546,12 +546,23 @@ class SalidaCable:  # pragma: no cover - requiere VB-CABLE
     """Escribe el WAV del TTS a CABLE Input (el audio sintetizado NO vuelve
     al micrófono físico: la ruta de salida es explícitamente el cable).
 
-    ADR-019, fix 2: escribe POR BLOQUES — `reproducir` devuelve cuando el
-    PRIMER bloque se acepta (el primer sample es audible) y el resto del
-    audio se escribe en un hilo daemon. El cierre del turno ya no espera la
-    reproducción completa (la duración del audio NO es latencia).
+    UN WRITER + COLA FIFO (fix del audio entrecortado): con streaming llegan
+    varios chunks del TTS seguidos y cada `reproducir` parte su chunk en
+    bloques. Antes cada llamada lanzaba SU PROPIO hilo daemon para el resto de
+    sus bloques → con varios chunks había varios daemons compitiendo por el
+    stream, y el lock serializaba cada escritura pero NO el ORDEN: los bloques
+    de distintas partes del enunciado se intercalaban (síntoma: "una frase
+    bien, salta a otra, luego una palabra suelta"). Ahora `reproducir` solo
+    ENCOLA los bloques en orden y un ÚNICO hilo escritor los saca de la cola
+    (FIFO) y los escribe en secuencia: el orden del audio es el orden del
+    stream, sin intercalado, sin importar cuántos chunks lleguen.
 
-    `abrir()`/`cerrar()` permiten mantener el stream abierto entre turnos
+    ADR-019, fix 2: `reproducir` no bloquea esperando la reproducción — encola
+    y devuelve. El cierre del turno (primer sample audible) es cuando el writer
+    saca el primer bloque, que ocurre casi de inmediato (está bloqueado en
+    `cola.get()` esperando). La duración del audio NO es latencia.
+
+    `abrir()`/`cerrar()` mantienen el stream y el writer vivos entre turnos
     (abrir por turno paga ~1-3 s de overhead en Windows).
     """
 
@@ -560,14 +571,15 @@ class SalidaCable:  # pragma: no cover - requiere VB-CABLE
         self._bloque_s = bloque_s
         self._pa: Any | None = None
         self._stream: Any | None = None
-        self._lock_escritura: Any = None  # un solo escritor del stream a la vez
+        self._cola: Any = None  # queue.Queue de bloques; None = sentinela de cierre
+        self._writer: Any = None  # único hilo escritor (preserva el orden FIFO)
 
     def abrir(self) -> None:
+        import queue
         import threading
 
         import pyaudio
 
-        self._lock_escritura = threading.Lock()
         self._pa = pyaudio.PyAudio()
         indice = _buscar_device(self._pa, "CABLE Input", "maxOutputChannels", 2)
         if indice is None:
@@ -582,8 +594,37 @@ class SalidaCable:  # pragma: no cover - requiere VB-CABLE
             output=True,
             output_device_index=indice,
         )
+        self._cola = queue.Queue()
+        self._writer = threading.Thread(target=self._consumir, daemon=True)
+        self._writer.start()
+
+    def _consumir(self) -> None:
+        """Único escritor: saca bloques de la cola en orden y los escribe.
+
+        Un solo consumidor garantiza que el orden de escritura al cable es el
+        orden de encolado (FIFO), sin importar cuántos hilos productores haya.
+        `None` es el sentinela de cierre.
+        """
+        cola = self._cola
+        if cola is None:
+            return
+        while True:
+            bloque = cola.get()
+            if bloque is None:  # sentinela: cerrar el writer
+                return
+            stream = self._stream
+            if stream is not None:
+                stream.write(bloque)
 
     def cerrar(self) -> None:
+        cola = self._cola
+        writer = self._writer
+        if cola is not None:
+            cola.put(None)  # sentinela: el writer termina tras vaciar la cola
+        if writer is not None:
+            writer.join(timeout=2.0)
+        self._writer = None
+        self._cola = None
         if self._stream is not None:
             self._stream.stop_stream()
             self._stream.close()
@@ -593,48 +634,20 @@ class SalidaCable:  # pragma: no cover - requiere VB-CABLE
             self._pa = None
 
     def reproducir(self, audio: bytes, duracion_s: float, nombre: str) -> None:
-        """Primer bloque al stream y devuelve; el resto en un hilo daemon.
+        """Encola los bloques del audio en orden y devuelve (no bloquea).
 
-        El primer sample audible es el momento del primer bloque aceptado:
-        el cierre del turno (ADR-019) es ESE momento, no la duración del
-        audio. Sin stream (no abierto): no se reproduce (escalera).
+        El writer único los escribe al cable en secuencia FIFO. Sin stream/cola
+        (no abierto): no se reproduce (escalera del cable).
         """
         stream = self._stream
-        lock = self._lock_escritura
-        if stream is None or lock is None:
+        cola = self._cola
+        if stream is None or cola is None:
             return  # sin stream: no reproducir (escalera del cable)
         pcm = self._audio_a_pcm_cable(audio)
         # bloque en BYTES: rate * 2 canales * 2 bytes (int16) * segundos
         bloque = max(1, int(self._rate_cable * 4 * self._bloque_s))
-        bloques = [pcm[i : i + bloque] for i in range(0, len(pcm), bloque)]
-        if not bloques:
-            return  # audio vacío: nada que reproducir
-        if len(bloques) == 1:
-            # un solo bloque: no hay nada que encolar (mutante `>= 1` lo caza)
-            with lock:
-                stream.write(bloques[0])
-            return
-        restantes = bloques[1:]
-        with lock:  # un solo escritor: el daemon del turno anterior y el
-            # primer bloque del turno nuevo NO pueden escribir a la vez
-            stream.write(bloques[0])  # PRIMER bloque: cierre del turno
-        self._lanzar_resto(stream, lock, restantes)
-
-    def _lanzar_resto(self, stream: Any, lock: Any, restantes: list[bytes]) -> Any:
-        """Hilo daemon que escribe el resto (devuelto: el test verifica que
-        es daemon y que el cierre del turno no espera la reproducción)."""
-        import threading
-
-        hilo = threading.Thread(
-            target=self._escribir_resto, args=(stream, lock, restantes), daemon=True
-        )
-        hilo.start()
-        return hilo
-
-    def _escribir_resto(self, stream: Any, lock: Any, restantes: list[bytes]) -> None:
-        for bloque in restantes:
-            with lock:
-                stream.write(bloque)
+        for i in range(0, len(pcm), bloque):
+            cola.put(pcm[i : i + bloque])
 
     def _audio_a_pcm_cable(self, audio: bytes) -> bytes:
         """WAV → PCM int16 estéreo 48 kHz para el cable (resample lineal)."""
