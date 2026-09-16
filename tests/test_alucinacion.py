@@ -51,3 +51,16 @@ def test_frase_con_thank_you_dentro_no_es_fantasma() -> None:
 def test_min_tokens_configurable() -> None:
     assert es_alucinacion("go now", min_tokens=3) is True
     assert es_alucinacion("go right now", min_tokens=3) is False
+
+
+def test_repeticion_frontera_veces_exactas() -> None:
+    # veces == 3 es el MÍNIMO de la regla: los mutantes `> 3` y `>= 4`
+    # (veces >= 3 -> veces > 3 / veces >= 4) caen aquí
+    assert es_alucinacion("you you you") is True
+    assert es_alucinacion("you you you the") is True
+
+
+def test_repeticion_frontera_60_porciento_exacto() -> None:
+    # 3/5 == 0.6 EXACTO: no es patológico (regla estricta `> 0.6`); los
+    # mutantes `>= 0.6` y `/` -> `*` caen aquí
+    assert es_alucinacion("you you you the so") is False
