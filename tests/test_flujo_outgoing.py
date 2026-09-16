@@ -1014,3 +1014,48 @@ def test_salida_cable_abrir_falta_device_lanza_con_nombre(monkeypatch: pytest.Mo
     monkeypatch.setenv("TRADUCTOR_DEVICE_OUTGOING", "VoiceMeeter Input")
     with pytest.raises(RuntimeError, match="VoiceMeeter Input"):
         mod.SalidaCable().abrir()
+
+
+def test_salida_cable_abrir_configura_stream_cola_writer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`abrir` configura TODO lo observable: stream con los kwargs correctos
+    (device, canales, rate, formato), el PyAudio REAL se pasa a _buscar_device,
+    y arranca la cola + el writer único daemon del #28."""
+    import sys
+    import types
+
+    import traductor.flujo.adaptadores as mod
+
+    abierto: list[dict[str, object]] = []
+
+    class _PaFake:
+        def open(self, **kwargs: object) -> object:
+            abierto.append(kwargs)
+            return object()
+
+        def terminate(self) -> None:
+            pass
+
+    instancia = _PaFake()
+    monkeypatch.setitem(
+        sys.modules,
+        "pyaudio",
+        types.SimpleNamespace(PyAudio=lambda: instancia, paInt16=16),
+    )
+
+    def _fake_buscar(pa: object, nombre: str, canales: str, valor: int) -> int | None:
+        return 2 if pa is instancia else None  # el None -> RuntimeError abajo
+
+    monkeypatch.setattr(mod, "_buscar_device", _fake_buscar)
+    monkeypatch.delenv("TRADUCTOR_DEVICE_OUTGOING", raising=False)
+    cable = mod.SalidaCable(rate_cable=48000)
+    cable.abrir()
+    assert abierto == [
+        {"format": 16, "channels": 2, "rate": 48000, "output": True, "output_device_index": 2}
+    ]
+    assert cable._stream is not None
+    assert cable._cola is not None
+    assert cable._writer is not None
+    assert cable._writer.is_alive()
+    assert cable._writer.daemon is True
