@@ -17,6 +17,7 @@ from pydantic import BaseModel
 class Transcripcion(BaseModel):
     en: str
     es: str
+    fuente: str = "yo"  # "yo" (mi voz→EN) o "entrevistador" (su voz→ES)
 
 
 app = FastAPI(title="Teleprompter Traductor")

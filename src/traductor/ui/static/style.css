@@ -4,6 +4,11 @@ body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; c
 h1 { text-align: center; margin-bottom: 1rem; font-size: 1.8rem; }
 #feed { height: 70vh; overflow-y: auto; border: 1px solid #334155; border-radius: 8px; padding: 1rem; background: #1e293b; scroll-behavior: smooth; }
 .entry { padding: 1rem; margin-bottom: 0.8rem; border-left: 4px solid #38bdf8; background: #0f172a; border-radius: 4px; }
+.entry.yo { border-left-color: #38bdf8; margin-right: 15%; }
+.entry.entrevistador { border-left-color: #fb923c; margin-left: 15%; background: #1a1408; }
+.quien { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.4rem; color: #64748b; }
+.entry.yo .quien { color: #38bdf8; }
+.entry.entrevistador .quien { color: #fb923c; }
 .en { font-size: 1.1rem; color: #f8fafc; margin-bottom: 0.4rem; }
 .es { font-size: 1.05rem; color: #94a3b8; font-style: italic; }
 .hint { text-align: center; margin-top: 0.8rem; font-size: 0.85rem; color: #64748b; }

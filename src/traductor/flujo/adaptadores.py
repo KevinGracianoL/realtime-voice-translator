@@ -659,16 +659,28 @@ class SalidaCable:  # pragma: no cover - requiere VB-CABLE
 
 
 class TeleprompterHttp:  # pragma: no cover - requiere el UI corriendo
-    """Manda el texto al teleprompter local (FastAPI, POST /api/transcripcion)."""
+    """Manda el texto al teleprompter local (FastAPI, POST /api/transcripcion).
 
-    def __init__(self, url: str = "http://localhost:8000/api/transcripcion") -> None:
+    `fuente` etiqueta quién habla ("yo" = mi voz→EN, outgoing; "entrevistador"
+    = su voz→ES, incoming) para que el teleprompter los muestre en columnas
+    distintas y no se mezclen (bug: "muestra todo lo que yo diga junto con lo
+    del entrevistador").
+    """
+
+    def __init__(
+        self,
+        url: str = "http://localhost:8000/api/transcripcion",
+        *,
+        fuente: str = "yo",
+    ) -> None:
         self._url = url
+        self._fuente = fuente
 
     def mostrar(self, es: str, en: str) -> None:
-        self._post({"es": es, "en": en})
+        self._post({"es": es, "en": en, "fuente": self._fuente})
 
     def parcial(self, es: str) -> None:
-        self._post({"es": es, "en": ""})
+        self._post({"es": es, "en": "", "fuente": self._fuente})
 
     def _post(self, payload: dict[str, str]) -> None:
         from contextlib import suppress

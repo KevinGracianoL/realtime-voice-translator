@@ -27,6 +27,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from traductor.asr.alucinacion import es_alucinacion
 from traductor.tts.harness import RegistroEtapas
 from traductor.tts.modelos import Salud
 
@@ -79,8 +80,14 @@ class FlujoIncoming:
         """Traduce un segmento final EN→ES y lo muestra en pantalla.
 
         Devuelve True si el texto se mostró; False si el turno fue cancelado
-        (o superado) antes de mostrarlo.
+        (o superado) antes de mostrarlo, o si el texto es una alucinación de
+        whisper (silencio/ruido que el modelo "rellena" con frases fantasma
+        — bug: "whisper habla por mí y dice frases raras"). Las alucinaciones
+        se descartan ANTES de asignar número de turno: no cuentan como turno
+        ni tocan el teleprompter.
         """
+        if es_alucinacion(texto_en):
+            return False
         with self._lock:
             self._numero_turno += 1
             turno = self._numero_turno
