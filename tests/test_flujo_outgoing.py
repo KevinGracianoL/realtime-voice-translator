@@ -894,3 +894,118 @@ def test_buscar_device_encuentra_por_nombre_y_canales() -> None:
     assert _buscar_device(pa, "CABLE Output", "maxInputChannels", 2) == 2
     assert _buscar_device(pa, "CABLE Input", "maxInputChannels", 2) is None  # canales distintos
     assert _buscar_device(pa, "No existe", "maxOutputChannels", 2) is None
+
+
+def test_indice_cable_output_usa_nombre_por_env(monkeypatch) -> None:
+    """El incoming lee del device configurable por env TRADUCTOR_DEVICE_INCOMING
+    (default 'CABLE Output'): con dos tubos, el VB-CABLE queda SOLO para el
+    entrevistador y el incoming no capta el TTS del outgoing."""
+    import sys
+    import types
+
+    import traductor.flujo.adaptadores as mod
+
+    recibidos: list[str] = []
+
+    class _PaFake:
+        def terminate(self) -> None:
+            pass
+
+    monkeypatch.setitem(sys.modules, "pyaudio", types.SimpleNamespace(PyAudio=lambda: _PaFake()))
+    monkeypatch.setattr(
+        mod,
+        "_buscar_device",
+        lambda _pa, nombre, _canales, _valor: (recibidos.append(nombre), 2)[1],
+    )
+    monkeypatch.delenv("TRADUCTOR_DEVICE_INCOMING", raising=False)
+    assert mod.indice_cable_output() == 2
+    assert recibidos == ["CABLE Output"]
+
+    recibidos.clear()
+    monkeypatch.setenv("TRADUCTOR_DEVICE_INCOMING", "CABLE Output (B)")
+    assert mod.indice_cable_output() == 2
+    assert recibidos == ["CABLE Output (B)"]
+
+
+def test_indice_cable_output_falta_device_lanza_con_nombre(monkeypatch) -> None:
+    """Sin el device configurado, el error NOMBRA el device buscado (para que
+    el usuario sepa cuál instalar/configurar en TRADUCTOR_DEVICE_INCOMING)."""
+    import sys
+    import types
+
+    import pytest
+
+    import traductor.flujo.adaptadores as mod
+
+    class _PaFake:
+        def terminate(self) -> None:
+            pass
+
+    monkeypatch.setitem(sys.modules, "pyaudio", types.SimpleNamespace(PyAudio=lambda: _PaFake()))
+    monkeypatch.setattr(mod, "_buscar_device", lambda *_a, **_k: None)
+    monkeypatch.setenv("TRADUCTOR_DEVICE_INCOMING", "CABLE Output (B)")
+    with pytest.raises(RuntimeError, match="CABLE Output \\(B\\)"):
+        mod.indice_cable_output()
+
+
+def test_salida_cable_abrir_usa_nombre_por_env(monkeypatch) -> None:
+    """El outgoing escribe al device configurable por env TRADUCTOR_DEVICE_OUTGOING
+    (default 'CABLE Input'): con VoiceMeeter el TTS va al VAIO (mic de Meet/OBS)
+    y el VB-CABLE queda libre para el entrevistador. El writer+cola FIFO del
+    #28 se respeta intacto (solo cambia el nombre buscado)."""
+    import sys
+    import types
+
+    import traductor.flujo.adaptadores as mod
+
+    recibidos: list[str] = []
+
+    class _PaFake:
+        def open(self, **_kwargs: object) -> object:
+            return object()
+
+        def terminate(self) -> None:
+            pass
+
+    monkeypatch.setitem(
+        sys.modules,
+        "pyaudio",
+        types.SimpleNamespace(PyAudio=lambda: _PaFake(), paInt16=8),
+    )
+    monkeypatch.setattr(
+        mod,
+        "_buscar_device",
+        lambda _pa, nombre, _canales, _valor: (recibidos.append(nombre), 2)[1],
+    )
+    monkeypatch.delenv("TRADUCTOR_DEVICE_OUTGOING", raising=False)
+    cable = mod.SalidaCable()
+    cable.abrir()
+    assert recibidos == ["CABLE Input"]
+    assert cable._writer is not None  # el writer único del #28 sigue arrancando
+
+    recibidos.clear()
+    monkeypatch.setenv("TRADUCTOR_DEVICE_OUTGOING", "VoiceMeeter Input")
+    cable2 = mod.SalidaCable()
+    cable2.abrir()
+    assert recibidos == ["VoiceMeeter Input"]
+
+
+def test_salida_cable_abrir_falta_device_lanza_con_nombre(monkeypatch) -> None:
+    """Sin el device configurado, el error NOMBRA el device buscado (para que
+    el usuario sepa cuál instalar/configurar en TRADUCTOR_DEVICE_OUTGOING)."""
+    import sys
+    import types
+
+    import pytest
+
+    import traductor.flujo.adaptadores as mod
+
+    monkeypatch.setitem(
+        sys.modules,
+        "pyaudio",
+        types.SimpleNamespace(PyAudio=lambda: types.SimpleNamespace(terminate=lambda: None)),
+    )
+    monkeypatch.setattr(mod, "_buscar_device", lambda *_a, **_k: None)
+    monkeypatch.setenv("TRADUCTOR_DEVICE_OUTGOING", "VoiceMeeter Input")
+    with pytest.raises(RuntimeError, match="VoiceMeeter Input"):
+        mod.SalidaCable().abrir()
