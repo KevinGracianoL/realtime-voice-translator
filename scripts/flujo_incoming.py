@@ -20,6 +20,7 @@ Uso:
 
 from __future__ import annotations
 
+import os
 import sys
 
 
@@ -44,13 +45,16 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
         teleprompter=TeleprompterHttp(),
     )
     try:
-        AsrCable(flujo, indice_cable=indice_cable_output()).correr()
+        AsrCable(
+            flujo,
+            indice_cable=indice_cable_output(),
+            # afines a esta máquina/voz sintética de la demo: la voz REAL del
+            # entrevistador varía — ajustables por env sin tocar el código.
+            umbral_actividad=float(os.environ.get("TRADUCTOR_UMBRAL_RMS", "300.0")),
+            fragmento_max_s=float(os.environ.get("TRADUCTOR_FRAGMENTO_MAX_S", "12.0")),
+        ).correr()
     except KeyboardInterrupt:
         print("\nFlujo detenido.")
-
-
-if __name__ == "__main__":
-    main()
 
 
 if __name__ == "__main__":

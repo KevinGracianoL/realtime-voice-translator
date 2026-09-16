@@ -12,6 +12,7 @@ ADR-015 que se prueban aquí:
 """
 
 from collections.abc import Callable
+from typing import Any
 
 import pytest
 
@@ -188,3 +189,73 @@ def test_validar_arranque_repetida_3_veces_pasa_4_no() -> None:
     assert validar_arranque_en_es(lambda en: repetida).disponible is True
     patologica = ("palabra " * 4) + "sistemas distribuidos"
     assert validar_arranque_en_es(lambda en: patologica).disponible is False
+
+
+def _vad(
+    *, chunk_s: float = 0.5, silencio: float = 1.0, max_s: float = 12.0
+) -> Callable[[list[float]], list[tuple[int, tuple[Any, ...]]]]:
+    """Helper: AsrCable mínimo con la máquina de estados pura."""
+    import queue
+
+    from traductor.flujo.adaptadores import procesar_chunk_vad
+
+    cola: queue.Queue[tuple[int, tuple[Any, ...]]] = queue.Queue()
+    estado: dict[str, Any] = {}
+    numero_chunk = 0
+
+    def alimentar(rms_por_chunk: list[float]) -> list[tuple[int, tuple[Any, ...]]]:
+        nonlocal numero_chunk
+        for rms in rms_por_chunk:
+            procesar_chunk_vad(
+                estado,
+                f"chunk-{numero_chunk}",
+                rms,
+                chunk_s=chunk_s,
+                umbral_actividad=300.0,
+                silencio_cierre_s=silencio,
+                fragmento_max_s=max_s,
+                cola=cola,
+            )
+            numero_chunk += 1
+        turnos: list[tuple[int, tuple[Any, ...]]] = []
+        while not cola.empty():
+            turnos.append(cola.get())
+        return turnos
+
+    return alimentar
+
+
+def test_vad_encola_turno_al_cerrar_el_silencio() -> None:
+    """El turno se encola con SU número al cerrar el silencio: voz (RMS alto)
+    + silencio > 1 s → un turno con los chunks correctos (el cierre ocurre
+    cuando el silencio acumulado SUPERA 1.0 s: tercer chunk de silencio)."""
+    alimentar = _vad()
+    turnos = alimentar([500.0, 400.0, 10.0, 5.0, 3.0, 2.0])
+    assert len(turnos) == 1
+    numero, fragmento = turnos[0]
+    assert numero == 0  # FIFO: el contador arranca en 0
+    assert fragmento == ("chunk-0", "chunk-1", "chunk-2", "chunk-3", "chunk-4")
+
+
+def test_vad_ignora_silencio_inicial() -> None:
+    """Silencio antes de la primera voz: NO se encola nada."""
+    alimentar = _vad()
+    assert alimentar([5.0, 3.0, 500.0, 4.0]) == []
+
+
+def test_vad_dos_turnos_en_orden_fifo() -> None:
+    """Dos turnos consecutivos se encolan con números ASCENDENTES (el orden
+    de pantalla es el de la entrada — revisión del PR #26). El silencio debe
+    SUPERAR 1.0 s: tres chunks de 0.5 s (0.5, 1.0, 1.5)."""
+    alimentar = _vad()
+    turnos = alimentar([500.0, 3.0, 2.0, 2.0, 400.0, 1.0, 1.0, 1.0])
+    assert [(n, len(f)) for n, f in turnos] == [(0, 4), (1, 4)]
+
+
+def test_vad_corte_por_fragmento_maximo() -> None:
+    """Un fragmento que excede `fragmento_max_s` se cierra aunque NO haya
+    silencio (voz continua): 0.5*3 = 1.5 s > 1.0 s → corta en el chunk 2."""
+    alimentar = _vad(max_s=1.0)
+    turnos = alimentar([500.0, 500.0, 500.0, 500.0])
+    assert len(turnos) == 1
+    assert len(turnos[0][1]) == 3

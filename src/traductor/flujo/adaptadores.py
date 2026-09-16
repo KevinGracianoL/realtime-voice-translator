@@ -143,6 +143,64 @@ class AsrRealtime:  # pragma: no cover - requiere micrófono + RealtimeSTT
             grabador.text(self._final)
 
 
+def procesar_chunk_vad(
+    estado: dict[str, Any],
+    arr: Any,
+    rms: float,
+    *,
+    chunk_s: float,
+    umbral_actividad: float,
+    silencio_cierre_s: float,
+    fragmento_max_s: float,
+    cola: Any,
+) -> None:
+    """Máquina de estados del VAD por energía (pura y testeable).
+
+    `estado` lleva `fragmento` (chunks acumulados), `habla` (bool),
+    `silencio_desde` (segundos de silencio tras el último habla) y
+    `contador_turnos`. Al CERRAR un turno, le asigna el contador FIFO (0, 1,
+    2...) y encola `(numero_turno, tuple(fragmento))` — el orden de pantalla
+    es el orden de la ENTRADA, no el de la transcripción (revisión del PR
+    #26: antes cada cierre lanzaba su propio hilo y un turno corto podía
+    adelantarse a uno largo anterior).
+
+    `arr` es OPACO para la máquina (no toca numpy): la concatenación real la
+    hace el worker al transcribir. Así se testea en CI sin numpy.
+    """
+    fragmento: list[Any] = estado.setdefault("fragmento", [])
+    habla = estado.get("habla", False)
+    silencio_desde = estado.get("silencio_desde", 0.0)
+    if rms > umbral_actividad:
+        estado["habla"] = True
+        estado["silencio_desde"] = 0.0
+        fragmento.append(arr)
+        # corte por LONGITUD también con voz continua: sin silencio, un turno
+        # infinito nunca cerraría (la voz real no es continua 12 s seguidos,
+        # pero el límite debe valer siempre)
+        if len(fragmento) * chunk_s > fragmento_max_s:
+            _cerrar_turno(estado, fragmento, cola)
+        return
+    if not habla:
+        return
+    silencio_desde += chunk_s
+    estado["silencio_desde"] = silencio_desde
+    fragmento.append(arr)
+    cierre = silencio_desde > silencio_cierre_s
+    cierre = cierre or len(fragmento) * chunk_s > fragmento_max_s
+    if cierre:
+        _cerrar_turno(estado, fragmento, cola)
+
+
+def _cerrar_turno(estado: dict[str, Any], fragmento: list[Any], cola: Any) -> None:
+    """Cierra el turno: asigna el contador FIFO y encola para el worker."""
+    numero_turno = estado.get("contador_turnos", 0)
+    estado["contador_turnos"] = numero_turno + 1
+    cola.put((numero_turno, tuple(fragmento)))
+    estado["fragmento"] = []
+    estado["habla"] = False
+    estado["silencio_desde"] = 0.0
+
+
 class AsrCable:  # pragma: no cover - requiere VB-CABLE + modelo
     """Captura el audio REMOTO del cable y lo transcribe (incoming EN→ES).
 
@@ -150,6 +208,14 @@ class AsrCable:  # pragma: no cover - requiere VB-CABLE + modelo
     un VAD por ENERGÍA separa los turnos (el silencio del cable mide RMS < 10;
     la voz ~2000+), y faster-whisper transcribe el fragmento completo al
     cerrar el turno. El flujo incoming traduce EN→ES y lo muestra.
+
+    UN WORKER + COLA (revisión del PR #26): cada cierre de turno encola el
+    bloque en `queue.Queue` con su NÚMERO DE TURNO asignado en orden FIFO, y
+    un ÚNICO worker desencola y transcribe en secuencia. Antes cada cierre
+    lanzaba su propio hilo → un turno corto podía terminar de transcribir
+    antes que uno largo anterior (orden invertido en pantalla y cancelación
+    del ADR-015 marcando como superado al enunciado más viejo) y
+    `WhisperModel.transcribe()` no es seguro bajo concurrencia.
 
     POR QUÉ NO RealtimeSTT para esta entrada (medido en la demo del PR #25):
     - el cable SOLO acepta 48000 y RealtimeSTT valida el device a 16000
@@ -188,6 +254,7 @@ class AsrCable:  # pragma: no cover - requiere VB-CABLE + modelo
         return self._whisper
 
     def correr(self) -> None:
+        import queue
         import threading
 
         import numpy as np
@@ -205,52 +272,60 @@ class AsrCable:  # pragma: no cover - requiere VB-CABLE + modelo
         )
         print("Flujo incoming (EN->ES, subtitulos) listo: ctrl+C para salir.", flush=True)
 
-        def transcribir_turno(fragmento: np.ndarray) -> None:
+        def worker(cola: Any) -> None:
+            """ÚNICO transcriptor: desencola en orden y muestra en secuencia."""
             import io
 
             import soundfile as sf
 
-            buf = io.BytesIO()
-            sf.write(
-                file=buf,
-                data=fragmento.astype(np.float32),
-                samplerate=self._rate_cable,
-                format="WAV",
-            )
-            buf.seek(0)
-            try:
-                segmentos, _ = whisper.transcribe(buf, language="en")
-                texto_en = " ".join(s.text for s in segmentos).strip()
-            except Exception:
-                return
-            if not texto_en:
-                return
-            try:
-                self._flujo.segmento_final(texto_en)
-            except Exception as exc:  # noqa: BLE001 - el hilo no muere en silencio
-                print(f"[incoming] ERROR: {type(exc).__name__}: {exc}", flush=True)
+            while True:
+                numero_turno, fragmento = cola.get()
+                buf = io.BytesIO()
+                sf.write(
+                    file=buf,
+                    data=np.concatenate(fragmento).astype(np.float32),
+                    samplerate=self._rate_cable,
+                    format="WAV",
+                )
+                buf.seek(0)
+                try:
+                    segmentos, _ = whisper.transcribe(buf, language="en")
+                    texto_en = " ".join(s.text for s in segmentos).strip()
+                except Exception as exc:  # noqa: BLE001 - el flujo no enmudece sin log
+                    print(
+                        f"[incoming] turno {numero_turno}: whisper falló: "
+                        f"{type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
+                    continue
+                if not texto_en:
+                    continue
+                try:
+                    self._flujo.segmento_final(texto_en)
+                except Exception as exc:  # noqa: BLE001 - el hilo no muere en silencio
+                    print(
+                        f"[incoming] turno {numero_turno}: segmento_final falló: "
+                        f"{type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
 
-        fragmento: list[np.ndarray] = []
-        habla = False
-        silencio_desde = 0.0
+        cola: Any = queue.Queue()
+        threading.Thread(target=worker, args=(cola,), daemon=True).start()
+        estado: dict[str, Any] = {}
         while True:
             datos = stream.read(int(self._rate_cable * self._chunk_s), exception_on_overflow=False)
             arr = np.frombuffer(datos, dtype=np.int16).astype(np.float32)
             rms = float(np.sqrt(np.mean(arr**2)))
-            if rms > self._umbral_actividad:
-                habla = True
-                silencio_desde = 0.0
-                fragmento.append(arr)
-            elif habla:
-                silencio_desde += self._chunk_s
-                fragmento.append(arr)
-                cierre = silencio_desde > self._silencio_cierre_s
-                cierre = cierre or len(fragmento) * self._chunk_s > self._fragmento_max_s
-                if cierre:
-                    bloque = np.concatenate(fragmento)
-                    threading.Thread(target=transcribir_turno, args=(bloque,), daemon=True).start()
-                    habla = False
-                    fragmento = []
+            procesar_chunk_vad(
+                estado,
+                arr,
+                rms,
+                chunk_s=self._chunk_s,
+                umbral_actividad=self._umbral_actividad,
+                silencio_cierre_s=self._silencio_cierre_s,
+                fragmento_max_s=self._fragmento_max_s,
+                cola=cola,
+            )
 
 
 class TtsWorkerCliente:  # pragma: no cover - requiere venv-tts + modelo
