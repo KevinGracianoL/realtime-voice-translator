@@ -37,6 +37,34 @@ def test_repeticion_patologica() -> None:
     assert es_alucinacion("the the the the the") is True
 
 
+def test_frase_repetida_ngramas() -> None:
+    """Bug real de la demo: whisper repite la MISMA frase sobre audio mezclado."""
+    catch = "I'm going to catch you"
+    assert es_alucinacion(f"{catch}, {catch}, {catch}") is True
+    assert es_alucinacion("okay so okay so okay so") is True
+    assert es_alucinacion("no no no") is True
+
+
+def test_frase_repetida_robusta_a_basura() -> None:
+    """El bucle de whisper con basura alrededor: 3 copias + cola distinta.
+
+    DeepSeek midió 'I don't know what you're talking about' x3 con tiny sobre
+    un fragmento de 12.5 s. El filtro debe atraparlo aunque whisper varíe el
+    final (no exige que TODO el texto sea copias exactas)."""
+    frase = "I don't know what you're talking about"
+    assert es_alucinacion(f"{frase} {frase} {frase}") is True
+    assert es_alucinacion(f"{frase} {frase} {frase} yeah now") is True
+    # con solo DOS copias no se marca (puede ser énfasis real): exige 3+
+    assert es_alucinacion(f"{frase} {frase}") is False
+
+
+def test_frase_repetida_no_afecta_habla_real() -> None:
+    """Una intervención real NO es k copias exactas de un bloque."""
+    assert es_alucinacion("tell me tell me about your last project") is False
+    assert es_alucinacion("what what is your experience") is False
+    assert es_alucinacion("very very good candidate for the role") is False
+
+
 def test_habla_real_pasa() -> None:
     assert es_alucinacion("Tell me about your experience with distributed systems") is False
     assert es_alucinacion("What is your greatest weakness?") is False

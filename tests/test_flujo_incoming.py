@@ -515,3 +515,16 @@ def test_habla_real_con_thank_you_dentro_si_se_muestra() -> None:
     flujo, teleprompter = _flujo()
     assert flujo.segmento_final("thank you for taking the time to meet me today") is True
     assert len(teleprompter.finales) == 1
+
+
+def test_asrcable_fragmento_max_default_corto() -> None:
+    """El default de fragmento_max_s es 4.0 (no 12.0): whisper tiny no alucina
+    con fragmentos cortos. Un default largo revive el bug de la demo (12.5 s →
+    'I don't know what you're talking about' x3). Fija el default para que no
+    se revierta por accidente."""
+    from unittest.mock import MagicMock
+
+    from traductor.flujo.adaptadores import AsrCable
+
+    cable = AsrCable(MagicMock(), indice_cable=0)
+    assert cable._fragmento_max_s == 4.0
