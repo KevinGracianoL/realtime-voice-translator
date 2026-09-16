@@ -87,6 +87,12 @@ class AsrRealtime:  # pragma: no cover - requiere micrófono + RealtimeSTT
       cable virtual (CABLE Input como salida de Meet/Zoom), capturado con
       `input_device_index` del CABLE Output, `idioma="en"`.
 
+    `sample_rate` es la tasa de CAPTURA del device: el cable VB-CABLE solo
+    acepta 48000 (rechaza 16000/24000/44100 con InvalidSampleRate), mientras
+    que RealtimeSTT valida el device abriéndolo a SU `sample_rate` — si no se
+    alinea, "Selected device validation failed" (bug cazado en la demo del
+    PR #25: el micrófono físico acepta 16000, el cable no).
+
     RealtimeSTT ya integra VAD/endpointing y entrega sus callbacks desde SUS
     propios hilos (revisión #22: el invariante de hilo único era falso).
     - `_parcial`: el usuario/entrevistador volvió a hablar → se CANCELA el
@@ -102,11 +108,13 @@ class AsrRealtime:  # pragma: no cover - requiere micrófono + RealtimeSTT
         *,
         idioma: str = "es",
         input_device_index: int | None = None,
+        sample_rate: int = 16000,
         etiqueta: str = "",
     ) -> None:
         self._flujo = flujo
         self._idioma = idioma
         self._input_device_index = input_device_index
+        self._sample_rate = sample_rate
         self._etiqueta = etiqueta or f"Flujo {idioma}"
 
     def _parcial(self, texto: str) -> None:
@@ -127,11 +135,122 @@ class AsrRealtime:  # pragma: no cover - requiere micrófono + RealtimeSTT
             device="cuda",
             compute_type="int8",
             input_device_index=self._input_device_index,
+            sample_rate=self._sample_rate,
             on_realtime_transcription_update=self._parcial,
         )
         print(f"{self._etiqueta} listo: ctrl+C para salir.")
         while True:
             grabador.text(self._final)
+
+
+class AsrCable:  # pragma: no cover - requiere VB-CABLE + modelo
+    """Captura el audio REMOTO del cable y lo transcribe (incoming EN→ES).
+
+    Patrón del ENDURANCE (ADR-019): pyaudio lee del cable a 48000 en chunks,
+    un VAD por ENERGÍA separa los turnos (el silencio del cable mide RMS < 10;
+    la voz ~2000+), y faster-whisper transcribe el fragmento completo al
+    cerrar el turno. El flujo incoming traduce EN→ES y lo muestra.
+
+    POR QUÉ NO RealtimeSTT para esta entrada (medido en la demo del PR #25):
+    - el cable SOLO acepta 48000 y RealtimeSTT valida el device a 16000
+      ("Selected device validation failed");
+    - su modo manual (`use_microphone=False` + `feed_audio`) NO cierra los
+      turnos con esta entrada: el VAD de Silero detecta inicio pero el FIN
+      nunca se confirma (8 turnos del reproductor → 0 transcripciones en el
+      proceso aparte; el cable transfiere bien el audio — RMS verificado).
+    """
+
+    def __init__(
+        self,
+        flujo: FlujoASR,
+        *,
+        indice_cable: int,
+        rate_cable: int = 48000,
+        chunk_s: float = 0.5,
+        umbral_actividad: float = 300.0,
+        silencio_cierre_s: float = 1.0,
+        fragmento_max_s: float = 12.0,
+    ) -> None:
+        self._flujo = flujo
+        self._indice_cable = indice_cable
+        self._rate_cable = rate_cable
+        self._chunk_s = chunk_s
+        self._umbral_actividad = umbral_actividad
+        self._silencio_cierre_s = silencio_cierre_s
+        self._fragmento_max_s = fragmento_max_s
+        self._whisper: Any | None = None
+
+    def _cargar_whisper(self) -> Any:
+        if self._whisper is None:
+            from faster_whisper import WhisperModel
+
+            self._whisper = WhisperModel("tiny", device="cuda", compute_type="int8_float16")
+        return self._whisper
+
+    def correr(self) -> None:
+        import threading
+
+        import numpy as np
+        import pyaudio
+
+        whisper = self._cargar_whisper()
+        pa = pyaudio.PyAudio()
+        stream = pa.open(
+            format=pyaudio.paInt16,
+            channels=1,
+            rate=self._rate_cable,
+            input=True,
+            input_device_index=self._indice_cable,
+            frames_per_buffer=1024,
+        )
+        print("Flujo incoming (EN->ES, subtitulos) listo: ctrl+C para salir.", flush=True)
+
+        def transcribir_turno(fragmento: np.ndarray) -> None:
+            import io
+
+            import soundfile as sf
+
+            buf = io.BytesIO()
+            sf.write(
+                file=buf,
+                data=fragmento.astype(np.float32),
+                samplerate=self._rate_cable,
+                format="WAV",
+            )
+            buf.seek(0)
+            try:
+                segmentos, _ = whisper.transcribe(buf, language="en")
+                texto_en = " ".join(s.text for s in segmentos).strip()
+            except Exception:
+                return
+            if not texto_en:
+                return
+            try:
+                self._flujo.segmento_final(texto_en)
+            except Exception as exc:  # noqa: BLE001 - el hilo no muere en silencio
+                print(f"[incoming] ERROR: {type(exc).__name__}: {exc}", flush=True)
+
+        fragmento: list[np.ndarray] = []
+        habla = False
+        silencio_desde = 0.0
+        while True:
+            datos = stream.read(int(self._rate_cable * self._chunk_s), exception_on_overflow=False)
+            arr = np.frombuffer(datos, dtype=np.int16).astype(np.float32)
+            rms = float(np.sqrt(np.mean(arr**2)))
+            if rms > self._umbral_actividad:
+                habla = True
+                silencio_desde = 0.0
+                fragmento.append(arr)
+            elif habla:
+                silencio_desde += self._chunk_s
+                fragmento.append(arr)
+                cierre = silencio_desde > self._silencio_cierre_s
+                cierre = cierre or len(fragmento) * self._chunk_s > self._fragmento_max_s
+                if cierre:
+                    bloque = np.concatenate(fragmento)
+                    threading.Thread(target=transcribir_turno, args=(bloque,), daemon=True).start()
+                    habla = False
+                    fragmento = []
 
 
 class TtsWorkerCliente:  # pragma: no cover - requiere venv-tts + modelo

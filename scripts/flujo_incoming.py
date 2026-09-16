@@ -2,7 +2,7 @@
 
 Escuchar al entrevistador: captura el audio REMOTO (el entrevistador llega por
 Meet/Zoom; su audio se enruta al cable virtual), lo transcribe en inglés
-(RealtimeSTT en), lo traduce EN→ES (Argos) y lo muestra como SUBTÍTULOS en el
+(ASR del cable), lo traduce EN→ES (Argos) y lo muestra como SUBTÍTULOS en el
 teleprompter. El clon dinámico de la voz del entrevistador es OPCIONAL
 (ADR-015: subtítulos primero) — no se implementa aquí.
 
@@ -27,11 +27,7 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
 
-    from traductor.flujo.adaptadores import (
-        AsrRealtime,
-        TeleprompterHttp,
-        indice_cable_output,
-    )
+    from traductor.flujo.adaptadores import AsrCable, TeleprompterHttp, indice_cable_output
     from traductor.flujo.incoming import FlujoIncoming, validar_arranque_en_es
     from traductor.traduccion.argos import traducir
 
@@ -48,14 +44,13 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
         teleprompter=TeleprompterHttp(),
     )
     try:
-        AsrRealtime(
-            flujo,
-            idioma="en",
-            input_device_index=indice_cable_output(),
-            etiqueta="Flujo incoming (EN→ES, subtítulos)",
-        ).correr()
+        AsrCable(flujo, indice_cable=indice_cable_output()).correr()
     except KeyboardInterrupt:
         print("\nFlujo detenido.")
+
+
+if __name__ == "__main__":
+    main()
 
 
 if __name__ == "__main__":
