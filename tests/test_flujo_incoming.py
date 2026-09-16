@@ -12,6 +12,7 @@ ADR-015 que se prueban aquí:
 """
 
 from collections.abc import Callable
+from typing import Any
 
 import pytest
 
@@ -188,3 +189,306 @@ def test_validar_arranque_repetida_3_veces_pasa_4_no() -> None:
     assert validar_arranque_en_es(lambda en: repetida).disponible is True
     patologica = ("palabra " * 4) + "sistemas distribuidos"
     assert validar_arranque_en_es(lambda en: patologica).disponible is False
+
+
+def _vad(
+    *, chunk_s: float = 0.5, silencio: float = 1.0, max_s: float = 12.0
+) -> Callable[[list[float]], list[tuple[int, tuple[Any, ...]]]]:
+    """Helper: AsrCable mínimo con la máquina de estados pura."""
+    import queue
+
+    from traductor.flujo.adaptadores import procesar_chunk_vad
+
+    cola: queue.Queue[tuple[int, tuple[Any, ...]]] = queue.Queue()
+    estado: dict[str, Any] = {}
+    numero_chunk = 0
+
+    def alimentar(rms_por_chunk: list[float]) -> list[tuple[int, tuple[Any, ...]]]:
+        nonlocal numero_chunk
+        for rms in rms_por_chunk:
+            procesar_chunk_vad(
+                estado,
+                f"chunk-{numero_chunk}",
+                rms,
+                chunk_s=chunk_s,
+                umbral_actividad=300.0,
+                silencio_cierre_s=silencio,
+                fragmento_max_s=max_s,
+                cola=cola,
+            )
+            numero_chunk += 1
+        turnos: list[tuple[int, tuple[Any, ...]]] = []
+        while not cola.empty():
+            turnos.append(cola.get())
+        return turnos
+
+    return alimentar
+
+
+def test_vad_encola_turno_al_cerrar_el_silencio() -> None:
+    """El turno se encola con SU número al cerrar el silencio: voz (RMS alto)
+    + silencio > 1 s → un turno con los chunks correctos (el cierre ocurre
+    cuando el silencio acumulado SUPERA 1.0 s: tercer chunk de silencio)."""
+    alimentar = _vad()
+    turnos = alimentar([500.0, 400.0, 10.0, 5.0, 3.0, 2.0])
+    assert len(turnos) == 1
+    numero, fragmento = turnos[0]
+    assert numero == 0  # FIFO: el contador arranca en 0
+    assert fragmento == ("chunk-0", "chunk-1", "chunk-2", "chunk-3", "chunk-4")
+
+
+def test_vad_ignora_silencio_inicial() -> None:
+    """Silencio antes de la primera voz: NO se encola nada."""
+    alimentar = _vad()
+    assert alimentar([5.0, 3.0, 500.0, 4.0]) == []
+
+
+def test_vad_dos_turnos_en_orden_fifo() -> None:
+    """Dos turnos consecutivos se encolan con números ASCENDENTES (el orden
+    de pantalla es el de la entrada — revisión del PR #26). El silencio debe
+    SUPERAR 1.0 s: tres chunks de 0.5 s (0.5, 1.0, 1.5)."""
+    alimentar = _vad()
+    turnos = alimentar([500.0, 3.0, 2.0, 2.0, 400.0, 1.0, 1.0, 1.0])
+    assert [(n, len(f)) for n, f in turnos] == [(0, 4), (1, 4)]
+
+
+def test_vad_corte_por_fragmento_maximo() -> None:
+    """Un fragmento que excede `fragmento_max_s` se cierra aunque NO haya
+    silencio (voz continua): 0.5*3 = 1.5 s > 1.0 s → corta en el chunk 2."""
+    alimentar = _vad(max_s=1.0)
+    turnos = alimentar([500.0, 500.0, 500.0, 500.0])
+    assert len(turnos) == 1
+    assert len(turnos[0][1]) == 3
+
+
+def test_vad_frontera_umbral_exacto_no_dispara() -> None:
+    """RMS EXACTAMENTE en el umbral NO activa voz (mutante `>=` del umbral:
+    con 300.0 exacto el mutante activaría habla y el estado cambiaría)."""
+    import queue
+
+    from traductor.flujo.adaptadores import procesar_chunk_vad
+
+    cola_u: queue.Queue[tuple[int, tuple[Any, ...]]] = queue.Queue()
+    estado_u: dict[str, Any] = {}
+    procesar_chunk_vad(
+        estado_u,
+        "c0",
+        300.0,  # umbral exacto
+        chunk_s=0.5,
+        umbral_actividad=300.0,
+        silencio_cierre_s=1.0,
+        fragmento_max_s=12.0,
+        cola=cola_u,
+    )
+    assert estado_u["habla"] is False
+    assert cola_u.empty()
+
+
+def test_vad_rama_voz_marca_habla_y_resetea_silencio() -> None:
+    """Un chunk con VOZ deja el estado en habla=True, silencio_desde=0.0 y el
+    chunk en el fragmento (mutantes de las asignaciones de la rama de voz:
+    `habla=False` o `silencio_desde != 0` romperían estos asserts)."""
+    import queue
+
+    from traductor.flujo.adaptadores import procesar_chunk_vad
+
+    cola_v: queue.Queue[tuple[int, tuple[Any, ...]]] = queue.Queue()
+    estado_v: dict[str, Any] = {}
+    procesar_chunk_vad(
+        estado_v,
+        "c-voz",
+        500.0,
+        chunk_s=0.5,
+        umbral_actividad=300.0,
+        silencio_cierre_s=1.0,
+        fragmento_max_s=12.0,
+        cola=cola_v,
+    )
+    assert estado_v["habla"] is True
+    assert estado_v["silencio_desde"] == 0.0
+    assert estado_v["fragmento"] == ["c-voz"]
+    assert cola_v.empty()  # una sola voz no cierra
+
+
+def test_vad_frontera_longitud_rama_silencio() -> None:
+    """El cálculo de longitud del cierre en la RAMA DE SILENCIO (`cierre or
+    len(fragmento) * chunk_s > fragmento_max_s`): con fragmento de 3 chunks
+    (1.5s) y max=1.0 cierra aunque el silencio no alcance el umbral.
+
+    Mutantes: `* chunk_s`→`/` daría 3/0.5=6.0 > 1.0 (cierra igual, invisible),
+    y `>`→`>=` es la frontera — se cazan con 2 chunks (1.0s exacto, NO cierra
+    con `>`, SÍ con `>=`)."""
+    import queue
+
+    from traductor.flujo.adaptadores import procesar_chunk_vad
+
+    cola_l: queue.Queue[tuple[int, tuple[Any, ...]]] = queue.Queue()
+    estado_l: dict[str, Any] = {}
+    # voz + silencio con fragmento de 2 chunks (1.0s exacto): con `>=` el
+    # mutante cerraría; el código correcto (`>`) no (silencio aún < 1.0)
+    for rms in (500.0, 2.0):
+        procesar_chunk_vad(
+            estado_l,
+            f"c{rms}",
+            rms,
+            chunk_s=0.5,
+            umbral_actividad=300.0,
+            silencio_cierre_s=100.0,  # solo la longitud decide
+            fragmento_max_s=1.0,
+            cola=cola_l,
+        )
+    assert cola_l.empty()  # 2 chunks = 1.0s exacto NO corta (`>` estricto)
+    procesar_chunk_vad(
+        estado_l,
+        "c2.0",
+        2.0,
+        chunk_s=0.5,
+        umbral_actividad=300.0,
+        silencio_cierre_s=100.0,
+        fragmento_max_s=1.0,
+        cola=cola_l,
+    )
+    assert not cola_l.empty()  # 3 chunks = 1.5s > 1.0 SÍ corta
+
+
+def test_vad_frontera_silencio_exacto_no_cierra() -> None:
+    """Silencio acumulado EXACTAMENTE en `silencio_cierre_s` NO cierra aún
+    (mutante `>=` del cierre: 1.0 exacto cerraría y el estado cambiaría)."""
+    import queue
+
+    from traductor.flujo.adaptadores import procesar_chunk_vad
+
+    cola_s: queue.Queue[tuple[int, tuple[Any, ...]]] = queue.Queue()
+    estado_s: dict[str, Any] = {}
+    # voz (0.5s) + 2 silencios (1.0s acumulado = exacto): NO debe cerrar
+    for rms in (500.0, 3.0, 2.0):
+        procesar_chunk_vad(
+            estado_s,
+            f"c{rms}",
+            rms,
+            chunk_s=0.5,
+            umbral_actividad=300.0,
+            silencio_cierre_s=1.0,
+            fragmento_max_s=12.0,
+            cola=cola_s,
+        )
+    assert estado_s["habla"] is True
+    assert cola_s.empty()
+    # el tercer silencio (1.5s) SÍ cierra
+    procesar_chunk_vad(
+        estado_s,
+        "c2.0",
+        2.0,
+        chunk_s=0.5,
+        umbral_actividad=300.0,
+        silencio_cierre_s=1.0,
+        fragmento_max_s=12.0,
+        cola=cola_s,
+    )
+    assert not cola_s.empty()
+
+
+def test_vad_frontera_fragmento_max_exacto_no_corta() -> None:
+    """Longitud EXACTAMENTE en `fragmento_max_s` NO corta aún (mutante `>=`
+    del corte: 2 chunks = 1.0s exacto cortaría)."""
+    import queue
+
+    from traductor.flujo.adaptadores import procesar_chunk_vad
+
+    cola_m: queue.Queue[tuple[int, tuple[Any, ...]]] = queue.Queue()
+    estado_m: dict[str, Any] = {}
+    for rms in (500.0, 500.0):  # 2 chunks = 1.0s exacto, max=1.0
+        procesar_chunk_vad(
+            estado_m,
+            f"c{rms}",
+            rms,
+            chunk_s=0.5,
+            umbral_actividad=300.0,
+            silencio_cierre_s=100.0,  # el silencio no interfiere
+            fragmento_max_s=1.0,
+            cola=cola_m,
+        )
+    assert cola_m.empty()  # NO corta en el límite exacto
+    procesar_chunk_vad(
+        estado_m,
+        "c500",
+        500.0,
+        chunk_s=0.5,
+        umbral_actividad=300.0,
+        silencio_cierre_s=100.0,
+        fragmento_max_s=1.0,
+        cola=cola_m,
+    )
+    assert not cola_m.empty()  # 3 chunks = 1.5s > 1.0 SÍ corta
+
+
+def test_vad_estado_inicial_explicito() -> None:
+    """El estado vacío se inicializa completo (mutantes de `estado.get` con
+    defaults: el inicializador es el ÚNICO punto de defaults, sin ramas que
+    mutar). Un estado con `habla` faltante arranca en silencio."""
+    import queue
+
+    from traductor.flujo.adaptadores import procesar_chunk_vad
+
+    cola: queue.Queue[tuple[int, tuple[Any, ...]]] = queue.Queue()
+    estado: dict[str, Any] = {}
+    # silencio antes de la primera voz: NO encola y el estado queda inicializado
+    procesar_chunk_vad(
+        estado,
+        "c0",
+        5.0,
+        chunk_s=0.5,
+        umbral_actividad=300.0,
+        silencio_cierre_s=1.0,
+        fragmento_max_s=12.0,
+        cola=cola,
+    )
+    assert estado == {"fragmento": [], "habla": False, "silencio_desde": 0.0}
+    assert cola.empty()
+
+
+def test_vad_cierre_resetea_estado_y_contador_persiste() -> None:
+    """Tras un cierre, el estado vuelve a silencio (mutantes de los resets de
+    `_cerrar_turno`: fragmento/habla/silencio_desde) y el contador persiste
+    (el siguiente turno toma el número siguiente — FIFO)."""
+    import queue
+
+    from traductor.flujo.adaptadores import procesar_chunk_vad
+
+    cola: queue.Queue[tuple[int, tuple[Any, ...]]] = queue.Queue()
+    estado: dict[str, Any] = {}
+    # voz + silencio suficiente → cierra turno 0
+    for rms in (500.0, 3.0, 2.0, 2.0):
+        procesar_chunk_vad(
+            estado,
+            f"c{rms}",
+            rms,
+            chunk_s=0.5,
+            umbral_actividad=300.0,
+            silencio_cierre_s=1.0,
+            fragmento_max_s=12.0,
+            cola=cola,
+        )
+    numero, fragmento = cola.get()
+    assert (numero, len(fragmento)) == (0, 4)
+    # ESTADO POST-CIERRE: todo reseteado (los mutantes de los resets fallan)
+    assert estado == {
+        "fragmento": [],
+        "habla": False,
+        "silencio_desde": 0.0,
+        "contador_turnos": 1,
+    }
+    # segundo turno: el contador persiste (FIFO)
+    for rms in (400.0, 1.0, 1.0, 1.0):
+        procesar_chunk_vad(
+            estado,
+            f"c{rms}",
+            rms,
+            chunk_s=0.5,
+            umbral_actividad=300.0,
+            silencio_cierre_s=1.0,
+            fragmento_max_s=12.0,
+            cola=cola,
+        )
+    numero2, fragmento2 = cola.get()
+    assert (numero2, len(fragmento2)) == (1, 4)
