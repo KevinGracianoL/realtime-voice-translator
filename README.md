@@ -132,7 +132,7 @@ Cada uno de estos escenarios tiene su test **RED → GREEN**: se escribió el te
 | **ASR** | `faster-whisper` `int8` | TU117 sin Tensor Cores → FP16 emulado, INT8 en cores enteros |
 | **Traducción** | `argos-translate` + `ctranslate2` | Offline, CPU, gratis; `ARGOS_COMPUTE_TYPE=default` obligatorio |
 | **TTS** | **XTTS-v2** (fork `coqui-tts`) | Tu voz en inglés, streaming `inference_stream`, perfil pre-enrolado |
-| **Salida de audio** | VB-CABLE | Micrófono virtual para Meet/Zoom, ruta por nombre |
+| **Salida de audio** | VB-CABLE + VoiceMeeter | Dos tubos virtuales (entrevistador / tu voz EN), ruta por nombre y env |
 | **Medición** | `time.perf_counter` inyectable + `RegistroEtapas` | Atribución al 100 %, p95 honesto (n≥20) |
 | **UI** | `FastAPI` + teleprompter ES+EN | `localhost:8000`, deploy Caddy |
 | **Calidad** | `ruff` · `mypy --strict` · `pytest` · `mutmut` | 5 gates, CI en GitHub Actions |
@@ -144,7 +144,7 @@ Cada uno de estos escenarios tiene su test **RED → GREEN**: se escribió el te
 ## 💻 Requisitos
 
 - **Hardware de referencia:** Ryzen 5 4600H / GTX 1650 Ti 4 GB (TU117) / 24 GB RAM — 0 ms de red
-- Python 3.11+, CUDA 13.2, Windows 10/11, micrófono, [VB-CABLE](https://vb-audio.com/Cable/) (driver gratuito)
+- Python 3.11+, CUDA 13.2, Windows 10/11, micrófono, [VB-CABLE](https://vb-audio.com/Cable/) y [VoiceMeeter](https://vb-audio.com/Voicemeeter/) (drivers gratuitos) — un solo cable funciona, dos tubos evitan la retroalimentación entre flujos
 
 ---
 
@@ -192,6 +192,53 @@ texto, ms = medir_tiempo(lambda: traducir("hello", "en", "es"), clock=time.perf_
 
 ---
 
+## 🔊 Dos tubos de audio: VB-CABLE + VoiceMeeter (coste cero)
+
+Con un solo cable virtual, tu voz en inglés (TTS) y la del entrevistador entran al mismo
+tubo: el flujo incoming oiría **tu propio TTS** y lo transcribiría como si fuera el
+entrevistador (retroalimentación física del tubo, no un bug de software). La solución es
+separar los tubos — gratis, con [VoiceMeeter](https://vb-audio.com/Voicemeeter/) (del
+mismo fabricante que VB-CABLE, donationware sin mínimo):
+
+| Tubo | Device | Lleva |
+|---|---|---|
+| **VB-CABLE** (el que ya tienes) | `CABLE Input` → `CABLE Output` | La voz del **entrevistador** (simulador, o Meet/Zoom con salida de audio al cable) |
+| **VoiceMeeter** (instalar + reiniciar) | `VoiceMeeter Input` (VAIO) → `VoiceMeeter Out` | **Tu voz en inglés** (TTS) — es el micrófono virtual que Meet/OBS ven |
+
+No hace falta abrir la consola de VoiceMeeter: el par VAIO funciona como un cable de paso.
+Oyes al entrevistador por el monitor de `CABLE Output` (Windows: propiedades del
+dispositivo → "Escuchar este dispositivo").
+
+Los dispositivos son configurables por env (defaults retrocompatibles con un solo cable):
+
+```powershell
+# De dónde LEE el incoming (el entrevistador llega por el VB-CABLE limpio):
+$env:TRADUCTOR_DEVICE_INCOMING = "CABLE Output"       # default
+# A dónde ESCRIBE el TTS del outgoing (mic virtual de Meet/OBS):
+$env:TRADUCTOR_DEVICE_OUTGOING = "VoiceMeeter Input"  # default: "CABLE Input"
+```
+
+**Correr los flujos (demo del video):**
+
+```powershell
+$env:PYTHONPATH = "src"
+# 1. Teleprompter (subtítulos ES+EN, con la fuente de cada voz): http://localhost:8000
+python -m uvicorn traductor.ui.app:app --host 127.0.0.1 --port 8000
+# 2. Incoming: entrevistador → subtítulos en español (lee de TRADUCTOR_DEVICE_INCOMING)
+python scripts/flujo_incoming.py
+# 3. Outgoing: tu voz ES → inglés al mic virtual (escribe a TRADUCTOR_DEVICE_OUTGOING)
+python scripts/flujo_outgoing.py
+# 4. Simulador del entrevistador (una pasada; escribe al VB-CABLE)
+python scripts/reproducir_entrevistador.py --veces 1 --delay 2
+```
+
+Ajustes de turno por env (sin tocar código): `TRADUCTOR_SILENCIO_TURNO_S` (1.5 s de
+silencio cierra tu turno → el párrafo completo es UN turno, sin entrecortes),
+`TRADUCTOR_FRAGMENTO_MAX_S` (4 s máx. por fragmento del incoming → whisper `tiny` no
+alucina) y `TRADUCTOR_UMBRAL_RMS` (300, actividad de voz del cable).
+
+---
+
 ## 📁 Estructura
 
 ```
@@ -218,7 +265,7 @@ texto, ms = medir_tiempo(lambda: traducir("hello", "en", "es"), clock=time.perf_
 ├── scripts/                    # hardware, traducción, harness de gates
 ├── setup_dlls.py               # CUDA 12/13 coexistiendo (Windows, locks AV)
 ├── docs/                       # 16 ADRs con evidencia medida
-├── tests/                      # 256 tests, 100 % cov, mutantes en CI
+├── tests/                      # 380 tests, 100 % cov, mutantes en CI
 └── .github/workflows/ci.yml    # 5 gates que fallan el PR si algo se rompe
 ```
 
