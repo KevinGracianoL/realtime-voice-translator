@@ -894,3 +894,58 @@ def test_buscar_device_encuentra_por_nombre_y_canales() -> None:
     assert _buscar_device(pa, "CABLE Output", "maxInputChannels", 2) == 2
     assert _buscar_device(pa, "CABLE Input", "maxInputChannels", 2) is None  # canales distintos
     assert _buscar_device(pa, "No existe", "maxOutputChannels", 2) is None
+
+
+def test_asrrealtime_post_speech_silence_default() -> None:
+    """El default de post_speech_silence_duration es 1.5 s: el párrafo hablado
+    es UN solo turno. El default de RealtimeSTT (~0.6 s) lo parte en ~5 turnos y
+    cada uno cancela el TTS del anterior a media frase (bug: voz EN 'de a 4
+    palabras, corte'). Fija el default para que no se revierta."""
+    from unittest.mock import MagicMock
+
+    from traductor.flujo.adaptadores import AsrRealtime
+
+    asr = AsrRealtime(MagicMock())
+    assert asr._post_speech_silence_duration == 1.5
+    # override explícito respetado
+    asr2 = AsrRealtime(MagicMock(), post_speech_silence_duration=0.8)
+    assert asr2._post_speech_silence_duration == 0.8
+
+
+def test_asrrealtime_init_almacena_todos_los_atributos() -> None:
+    """El constructor guarda TODO lo que recibe (caza los mutantes de
+    asignación/borrado del __init__, no solo el atributo nuevo)."""
+    from unittest.mock import MagicMock
+
+    from traductor.flujo.adaptadores import AsrRealtime
+
+    flujo = MagicMock()
+    asr = AsrRealtime(
+        flujo,
+        idioma="es",
+        input_device_index=7,
+        sample_rate=32000,
+        etiqueta="mi etiqueta",
+        post_speech_silence_duration=2.0,
+    )
+    assert asr._flujo is flujo
+    assert asr._idioma == "es"
+    assert asr._input_device_index == 7
+    assert asr._sample_rate == 32000
+    assert asr._etiqueta == "mi etiqueta"
+    assert asr._post_speech_silence_duration == 2.0
+
+
+def test_asrrealtime_init_defaults() -> None:
+    """Los DEFAULTS del constructor quedan fijos (caza los mutantes de
+    default: idioma->"XXesXX", sample_rate->16001, etiqueta->"XXXX")."""
+    from unittest.mock import MagicMock
+
+    from traductor.flujo.adaptadores import AsrRealtime
+
+    asr = AsrRealtime(MagicMock())
+    assert asr._idioma == "es"
+    assert asr._input_device_index is None
+    assert asr._sample_rate == 16000
+    assert asr._etiqueta == "Flujo es"
+    assert asr._post_speech_silence_duration == 1.5

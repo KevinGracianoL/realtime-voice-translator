@@ -51,7 +51,7 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
             # afines a esta máquina/voz sintética de la demo: la voz REAL del
             # entrevistador varía — ajustables por env sin tocar el código.
             umbral_actividad=float(os.environ.get("TRADUCTOR_UMBRAL_RMS", "300.0")),
-            fragmento_max_s=float(os.environ.get("TRADUCTOR_FRAGMENTO_MAX_S", "12.0")),
+            fragmento_max_s=float(os.environ.get("TRADUCTOR_FRAGMENTO_MAX_S", "4.0")),
         ).correr()
     except KeyboardInterrupt:
         print("\nFlujo detenido.")

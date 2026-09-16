@@ -17,6 +17,7 @@ Uso:
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -65,7 +66,13 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
         max_sobrantes=10,
     )
     try:
-        AsrRealtime(flujo).correr()
+        AsrRealtime(
+            flujo,
+            # 1.5 s de silencio cierra el turno: el párrafo entero es UN turno
+            # (evita que cada frase cancele el TTS de la anterior). Ajustable
+            # por env sin tocar código.
+            post_speech_silence_duration=float(os.environ.get("TRADUCTOR_SILENCIO_TURNO_S", "1.5")),
+        ).correr()
     except KeyboardInterrupt:
         print("\nFlujo detenido.")
     finally:

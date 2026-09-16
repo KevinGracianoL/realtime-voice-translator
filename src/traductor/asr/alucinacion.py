@@ -98,4 +98,56 @@ def es_alucinacion(texto: str, *, min_tokens: int = 1) -> bool:
         return True
     conteo = {t: tokens.count(t) for t in set(tokens)}
     veces = max(conteo.values())
-    return veces >= 3 and veces / len(tokens) > 0.6
+    if veces >= 3 and veces / len(tokens) > 0.6:
+        return True
+    return _es_frase_repetida(tokens)
+
+
+def _es_frase_repetida(tokens: list[str]) -> bool:
+    """True si algún n-grama se repite >= 3 veces CONSECUTIVAS en el texto.
+
+    Alucinación clásica de whisper sobre fragmentos largos/ruidosos: entra en
+    un bucle y repite la misma frase ("I don't know what you're talking about"
+    x3, "I'm going to catch you" x3). Ningún token individual domina (hay
+    varios distintos a ~12% cada uno), así que la regla del token dominante NO
+    la atrapa; esta sí.
+
+    Robusto a basura alrededor del bucle (a diferencia de exigir que TODO el
+    texto sea k copias exactas): busca, para cada longitud de bloque L y cada
+    posición de inicio, cuántas veces se repite el bloque `tokens[i:i+L]`
+    inmediatamente después de sí mismo. 3+ repeticiones consecutivas de un
+    mismo bloque casi nunca son habla real y sí son la firma del bucle.
+
+    NOTA: es una SEGUNDA capa defensiva. La causa raíz de estas alucinaciones
+    es el fragmento demasiado largo que recibe whisper (el VAD acumula hasta
+    `fragmento_max_s`); la cura de raíz es acortar el fragmento / meter pausas
+    en el input (ver AsrCable), no filtrar el output. Este filtro es el
+    cinturón; la pausa en el input son los tirantes.
+
+    Los dos `# pragma: no mutate` de los límites de los bucles son mutantes
+    EQUIVALENTES (no cazables por test): `range(n - longitud)` -> `range(n +
+    longitud)` solo añade inicios donde el while interno no entra (el primer
+    bloque parcial corta en `n` y un slice parcial de longitud menor nunca es
+    `==` al bloque completo), y `j + longitud <= n` -> `j - longitud <= n`
+    solo itera de más comparando slices vacíos/parciales, que tampoco igualan
+    al bloque. En ambos casos el resultado observable es idéntico.
+
+    El `# pragma: no mutate` del bucle exterior cubre el mutante `range(1,
+    n // 3 + 1)` -> `range(1, n // 3 + 2)`: la longitud extra L = n//3 + 1
+    no cabe 3 veces en `n` (3L > n), el while nunca entra y el resultado es
+    idéntico. El otro mutante de esa línea (`range(2, ...)` omitiría la
+    longitud 1) está cubierto por test: "no no no yes yes" depende de la
+    repetición de un n-grama de longitud 1 con basura alrededor.
+    """
+    n = len(tokens)
+    for longitud in range(1, n // 3 + 1):  # pragma: no mutate
+        for inicio in range(n - longitud):  # pragma: no mutate
+            bloque = tokens[inicio : inicio + longitud]
+            repeticiones = 1
+            j = inicio + longitud
+            while j + longitud <= n and tokens[j : j + longitud] == bloque:  # pragma: no mutate
+                repeticiones += 1
+                j += longitud
+            if repeticiones >= 3:
+                return True
+    return False
