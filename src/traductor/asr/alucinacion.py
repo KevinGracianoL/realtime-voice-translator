@@ -131,9 +131,16 @@ def _es_frase_repetida(tokens: list[str]) -> bool:
     `==` al bloque completo), y `j + longitud <= n` -> `j - longitud <= n`
     solo itera de más comparando slices vacíos/parciales, que tampoco igualan
     al bloque. En ambos casos el resultado observable es idéntico.
+
+    El `# pragma: no mutate` del bucle exterior cubre el mutante `range(1,
+    n // 3 + 1)` -> `range(1, n // 3 + 2)`: la longitud extra L = n//3 + 1
+    no cabe 3 veces en `n` (3L > n), el while nunca entra y el resultado es
+    idéntico. El otro mutante de esa línea (`range(2, ...)` omitiría la
+    longitud 1) está cubierto por test: "no no no yes yes" depende de la
+    repetición de un n-grama de longitud 1 con basura alrededor.
     """
     n = len(tokens)
-    for longitud in range(1, n // 3 + 1):
+    for longitud in range(1, n // 3 + 1):  # pragma: no mutate
         for inicio in range(n - longitud):  # pragma: no mutate
             bloque = tokens[inicio : inicio + longitud]
             repeticiones = 1

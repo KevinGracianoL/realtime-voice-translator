@@ -43,6 +43,9 @@ def test_frase_repetida_ngramas() -> None:
     assert es_alucinacion(f"{catch}, {catch}, {catch}") is True
     assert es_alucinacion("okay so okay so okay so") is True
     assert es_alucinacion("no no no") is True
+    # n-grama de longitud 1 repetido 3x con basura alrededor (no pasa por la
+    # regla del token dominante: 3/5 = 0.6 <= 0.6): depende SOLO de la 2a capa
+    assert es_alucinacion("no no no yes yes") is True
 
 
 def test_frase_repetida_robusta_a_basura() -> None:
