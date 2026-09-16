@@ -638,15 +638,20 @@ class _StreamFake:
 
 
 def _cable_con_stream(stream: _StreamFake, rate_cable: int = 48000, bloque_s: float = 0.5) -> Any:
-    """SalidaCable con stream y lock fake (la clase es # pragma: no cover:
-    el hardware no está en CI, su lógica de bloques sí se prueba aquí)."""
+    """SalidaCable con stream fake y writer real (la clase es # pragma: no
+    cover: el hardware no está en CI, su lógica de bloques/orden sí se prueba
+    aquí). Arranca el hilo escritor único que consume la cola FIFO.
+    """
+    import queue
     import threading
 
     from traductor.flujo.adaptadores import SalidaCable
 
     cable = SalidaCable(rate_cable=rate_cable, bloque_s=bloque_s)
     cable._stream = stream
-    cable._lock_escritura = threading.Lock()
+    cable._cola = queue.Queue()
+    cable._writer = threading.Thread(target=cable._consumir, daemon=True)
+    cable._writer.start()
     return cable
 
 
@@ -657,7 +662,7 @@ def _esperar_escrituras(stream: _StreamFake, n: int) -> None:
         import time
 
         time.sleep(0.005)
-    raise AssertionError(f"el daemon no escribió {n} bloques (tiene {len(stream.escrituras)})")
+    raise AssertionError(f"el writer no escribió {n} bloques (tiene {len(stream.escrituras)})")
 
 
 def test_cable_defaults_almacenados() -> None:
@@ -672,15 +677,13 @@ def test_cable_defaults_almacenados() -> None:
     assert cable._bloque_s == 0.1
 
 
-def test_cable_escribe_primer_bloque_y_resto_en_daemon() -> None:
-    """ADR-019 fix 2: `reproducir` escribe el PRIMER bloque y devuelve (el
-    cierre del turno = primer sample audible); el resto se encola para el
-    hilo daemon (sin bloquear el turno). El orden es el del audio."""
+def test_cable_escribe_bloques_en_orden() -> None:
+    """`reproducir` encola los bloques y el writer único los escribe en orden
+    (el cierre del turno no espera: el writer consume la cola en paralelo)."""
     stream = _StreamFake()
     cable = _cable_con_stream(stream)
     bloque = int(48000 * 4 * 0.5)  # 0.5 s estéreo int16 a 48 kHz = 96000 bytes
-    # bloques DISTINGUIBLES (cada uno con un byte propio: un pcm periódico
-    # haría indistinguibles los mutantes de slice/offset)
+    # bloques DISTINGUIBLES (cada uno con un byte propio)
     pcm = bytes([1]) * bloque + bytes([2]) * bloque + bytes([3]) * bloque + bytes([4]) * bloque
     audios: list[bytes] = []
 
@@ -692,11 +695,8 @@ def test_cable_escribe_primer_bloque_y_resto_en_daemon() -> None:
 
     cable.reproducir(b"wav-del-turno", 4.0, "xtts-kevin")
     assert audios == [b"wav-del-turno"]  # mutante `_audio_a_pcm_cable(None)`
-    # el PRIMER bloque se escribió síncrono (el cierre del turno no espera)
-    assert len(stream.escrituras) >= 1
-    assert stream.escrituras[0] == pcm[:bloque]
     _esperar_escrituras(stream, 4)
-    # el resto, en orden, sin omitir bloques (mutantes de slice/offset)
+    # los bloques, en orden, sin omitir ni intercalar (mutantes de slice/offset)
     esperado = [
         pcm[:bloque],
         pcm[bloque : 2 * bloque],
@@ -706,37 +706,33 @@ def test_cable_escribe_primer_bloque_y_resto_en_daemon() -> None:
     assert stream.escrituras == esperado
 
 
-def test_cable_lanzar_resto_es_daemon() -> None:
-    """El hilo del resto es DAEMON (mutantes `daemon=None`/`False`/ausente):
-    el cierre del turno no espera la reproducción ni al terminar el flujo."""
-    import threading
-
+def test_cable_varios_chunks_preservan_orden_global() -> None:
+    """FIX del audio entrecortado: dos `reproducir` seguidos (dos chunks del
+    stream TTS) deben salir al cable en el orden GLOBAL del enunciado, no
+    intercalados. Con la vieja arquitectura de un daemon por llamada, los
+    bloques del chunk 2 podían adelantarse a los del chunk 1."""
     stream = _StreamFake()
-    cable = _cable_con_stream(stream)
-    hilo = cable._lanzar_resto(stream, threading.Lock(), [b"a", b"b"])
-    assert hilo.daemon is True
-    hilo.join(timeout=1.0)
-    assert not hilo.is_alive()
-
-
-def test_cable_dos_bloques_escribe_ambos() -> None:
-    """Con EXACTAMENTE dos bloques el daemon existe y escribe el segundo
-    (mutantes `> 2` y `>= 1` del condicional lo cazan)."""
-    stream = _StreamFake()
-    cable = _cable_con_stream(stream)
+    cable = _cable_con_stream(stream, bloque_s=0.5)
     bloque = int(48000 * 4 * 0.5)
-    pcm = bytes([1]) * bloque * 2
-    cable._audio_a_pcm_cable = lambda _audio: pcm
+    chunk1 = bytes([1]) * bloque + bytes([2]) * bloque  # "frase A" en 2 bloques
+    chunk2 = bytes([3]) * bloque + bytes([4]) * bloque  # "frase B" en 2 bloques
+    respuestas = iter([chunk1, chunk2])
+    cable._audio_a_pcm_cable = lambda _audio: next(respuestas)
 
-    cable.reproducir(b"wav", 4.0, "xtts-kevin")
-    _esperar_escrituras(stream, 2)
-    assert len(stream.escrituras) == 2
+    cable.reproducir(b"chunk1", 2.0, "xtts-kevin")
+    cable.reproducir(b"chunk2", 2.0, "xtts-kevin")
+    _esperar_escrituras(stream, 4)
+    # orden global: A0, A1, B0, B1 — sin intercalado
+    assert stream.escrituras == [
+        bytes([1]) * bloque,
+        bytes([2]) * bloque,
+        bytes([3]) * bloque,
+        bytes([4]) * bloque,
+    ]
 
 
-def test_cable_bloque_unico_sin_daemon() -> None:
-    """Con UN solo bloque no hay hilo daemon (mutante `>= 1` del condicional
-    lo cazaría si creara daemon con lista vacía: el test espera 1 sola
-    escritura y que el primer bloque sea el pcm completo)."""
+def test_cable_bloque_unico_se_escribe() -> None:
+    """Un audio de un solo bloque se encola y escribe (sin caso especial)."""
     stream = _StreamFake()
     cable = _cable_con_stream(stream)
     bloque = int(48000 * 4 * 0.5)
@@ -744,11 +740,30 @@ def test_cable_bloque_unico_sin_daemon() -> None:
     cable._audio_a_pcm_cable = lambda _audio: pcm
 
     cable.reproducir(b"wav", 4.0, "xtts-kevin")
+    _esperar_escrituras(stream, 1)
+    assert stream.escrituras == [pcm]
+
+
+def test_cable_audio_vacio_no_escribe() -> None:
+    """Un audio vacío no encola nada (no hay bloques que escribir)."""
+    stream = _StreamFake()
+    cable = _cable_con_stream(stream)
+    cable._audio_a_pcm_cable = lambda _audio: b""
+
+    cable.reproducir(b"wav", 4.0, "xtts-kevin")
     import time
 
     time.sleep(0.02)
-    assert len(stream.escrituras) == 1
-    assert stream.escrituras[0] == pcm
+    assert stream.escrituras == []
+
+
+def test_cable_sin_stream_no_reproduce() -> None:
+    """Sin stream abierto (escalera): `reproducir` no hace nada, no revienta."""
+    from traductor.flujo.adaptadores import SalidaCable
+
+    cable = SalidaCable()
+    cable.reproducir(b"wav", 4.0, "xtts-kevin")  # _stream y _cola son None
+    # no lanza; nada que assert salvo que no explotó
 
 
 def test_cable_bloque_minimo_un_byte() -> None:
@@ -761,43 +776,78 @@ def test_cable_bloque_minimo_un_byte() -> None:
 
     cable.reproducir(b"wav", 4.0, "xtts-kevin")
     _esperar_escrituras(stream, 5)
-    assert len(stream.escrituras) == 5
     assert stream.escrituras == [bytes([3]), bytes([3]), bytes([3]), bytes([3]), bytes([3])]
 
 
-def test_cable_sin_stream_no_reproduce() -> None:
+def test_cable_cerrar_termina_writer() -> None:
+    """`cerrar` manda el sentinela y el writer termina (no queda hilo colgado)."""
+    stream = _StreamFake()
+    cable = _cable_con_stream(stream)
+    writer = cable._writer
+    # cerrar sin pyaudio real: parchear stream/pa a None-safe
+    cable._stream = None  # evita stop_stream/close sobre el fake
+    cable._pa = None
+    cable.cerrar()
+    writer.join(timeout=1.0)
+    assert not writer.is_alive()
+    assert cable._writer is None
+    assert cable._cola is None
+
+
+def test_cable_cerrar_espera_writer_con_timeout() -> None:
+    """`cerrar` hace join del writer con timeout ACOTADO (2 s): un writer
+    colgado no bloquea el cierre (mutantes `timeout=None`/`3.0` caen)."""
+
+    class _WriterFake:
+        def __init__(self) -> None:
+            self.joins: list[object] = []
+
+        def join(self, timeout: float | None = None) -> None:
+            self.joins.append(timeout)
+
+    stream = _StreamFake()
+    cable = _cable_con_stream(stream)
+    cable._stream = None  # evita stop_stream/close sobre el fake
+    cable._pa = None
+    writer = _WriterFake()
+    cable._writer = writer
+    cable.cerrar()
+    assert writer.joins == [2.0]
+
+
+def test_cable_sin_stream_no_reproduce_guard() -> None:
     """Sin stream abierto (escalera del cable): no se reproduce nada y el
     audio ni se parsea (mutante `and` del guard lo cazaría)."""
     from traductor.flujo.adaptadores import SalidaCable
 
     cable = SalidaCable()
-    cable._lock_escritura = __import__("threading").Lock()
-    cable.reproducir(b"wav-roto", 1.0, "xtts-kevin")  # ni siquiera parsea
-    assert True  # no lanza y no reproduce: flujo sigue vivo
+    cable._cola = __import__("queue").Queue()
+    cable.reproducir(b"wav-roto", 1.0, "xtts-kevin")  # sin stream: ni parsea
+    assert cable._cola.qsize() == 0  # no encoló nada: flujo sigue vivo
 
 
-def test_cable_sin_lock_no_reproduce() -> None:
-    """Sin lock de escritura (estado a medio abrir): no se reproduce nada
+def test_cable_sin_cola_no_reproduce() -> None:
+    """Sin cola (estado a medio abrir): no se reproduce nada
     (mutante `and` del guard lo cazaría)."""
-
     from traductor.flujo.adaptadores import SalidaCable
 
     cable = SalidaCable()
     cable._stream = _StreamFake()
-    cable._lock_escritura = None
+    cable._cola = None
     cable.reproducir(b"wav-roto", 1.0, "xtts-kevin")
-    assert True  # no lanza y no reproduce: flujo sigue vivo
+    assert cable._stream.escrituras == []  # no reproduce: flujo sigue vivo
 
 
 def test_cable_estado_inicial() -> None:
-    """El cable nace sin stream ni lock (mutantes `= ""` del __init__: un
-    falsy no-None pasaría los guards `is None` y reventaría al abrir)."""
+    """El cable nace sin stream, cola ni writer (mutantes `= ""` del __init__:
+    un falsy no-None pasaría los guards `is None` y reventaría al abrir)."""
     from traductor.flujo.adaptadores import SalidaCable
 
     cable = SalidaCable()
     assert cable._pa is None
     assert cable._stream is None
-    assert cable._lock_escritura is None
+    assert cable._cola is None
+    assert cable._writer is None
 
 
 def test_worker_cliente_estado_inicial() -> None:
