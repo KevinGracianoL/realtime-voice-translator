@@ -766,10 +766,17 @@ def perfil_por_defecto() -> str:
 def _buscar_device(pa: Any, nombre_parcial: str, canales: str, valor: int) -> int | None:
     """Índice del device de pyaudio cuyo nombre contiene `nombre_parcial` y
     cuya entrada/salida tiene `valor` canales; None si no existe (VB-CABLE
-    ausente → el caller lanza con mensaje claro, no un StopIteration vacío)."""
+    ausente → el caller lanza con mensaje claro, no un StopIteration vacío).
+
+    La comparación de nombre es CASE-INSENSITIVE: Windows/drivers varían la
+    capitalización (el driver reporta "Voicemeeter Input" con m minúscula
+    mientras el fabricante escribe "VoiceMeeter Input") y el usuario no debe
+    adivinar la del driver.
+    """
+    nombre = nombre_parcial.lower()
     for i in range(pa.get_device_count()):
         info = pa.get_device_info_by_index(i)
-        if nombre_parcial in str(info["name"]) and info[canales] == valor:
+        if nombre in str(info["name"]).lower() and info[canales] == valor:
             return i
     return None
 

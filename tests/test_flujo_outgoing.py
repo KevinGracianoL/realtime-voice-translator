@@ -896,6 +896,32 @@ def test_buscar_device_encuentra_por_nombre_y_canales() -> None:
     assert _buscar_device(pa, "No existe", "maxOutputChannels", 2) is None
 
 
+def test_buscar_device_ignora_capitalizacion() -> None:
+    """El nombre del device se compara case-insensitive: el driver reporta
+    'Voicemeeter Input' (m minúscula) mientras el fabricante/README escriben
+    'VoiceMeeter Input' — el usuario no debe adivinar la del driver."""
+    from traductor.flujo.adaptadores import _buscar_device
+
+    class _PaVoiceMeeter:
+        _devices = [
+            {
+                "name": "Voicemeeter Input (VB-Audio Voicemeeter VAIO)",
+                "maxInputChannels": 0,
+                "maxOutputChannels": 2,
+            },
+        ]
+
+        def get_device_count(self) -> int:
+            return len(self._devices)
+
+        def get_device_info_by_index(self, i: int) -> dict[str, object]:
+            return self._devices[i]
+
+    pa = _PaVoiceMeeter()
+    assert _buscar_device(pa, "VoiceMeeter Input", "maxOutputChannels", 2) == 0
+    assert _buscar_device(pa, "voicemeeter input", "maxOutputChannels", 2) == 0
+
+
 def _registrar_nombre(recibidos: list[str], nombre: str) -> int:
     recibidos.append(nombre)
     return 2
