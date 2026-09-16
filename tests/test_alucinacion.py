@@ -89,6 +89,9 @@ def test_repeticion_frontera_veces_exactas() -> None:
 
 
 def test_repeticion_frontera_60_porciento_exacto() -> None:
-    # 3/5 == 0.6 EXACTO: no es patológico (regla estricta `> 0.6`); los
-    # mutantes `>= 0.6` y `/` -> `*` caen aquí
-    assert es_alucinacion("you you you the so") is False
+    # 3/5 == 0.6 EXACTO sin repetición CONSECUTIVA: NO es patológico (regla
+    # estricta `> 0.6`); caza los mutantes `>= 0.6` y `/` -> `*`. (Con 3
+    # consecutivas la 2ª capa del n-grama sí lo marca: ver
+    # test_frase_repetida_ngramas.)
+    assert es_alucinacion("you there you here you") is False
+    assert es_alucinacion("you the you me") is False
