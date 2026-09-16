@@ -91,6 +91,13 @@ def test_repeticion_frontera_veces_exactas() -> None:
     assert es_alucinacion("you you you the") is True
 
 
+def test_repeticion_veces_tres_sin_consecutivas() -> None:
+    # veces == 3 y > 60% SIN 3+ consecutivas: la 2ª capa NO lo marca, así que
+    # la regla del token dominante es la que decide — caza `>= 3`->`>= 4` y
+    # `> 0.6`->`> 1.6` (con consecutivas la 2ª capa los enmascararía)
+    assert es_alucinacion("you you the you") is True
+
+
 def test_repeticion_frontera_60_porciento_exacto() -> None:
     # 3/5 == 0.6 EXACTO sin repetición CONSECUTIVA: NO es patológico (regla
     # estricta `> 0.6`); caza los mutantes `>= 0.6` y `/` -> `*`. (Con 3
