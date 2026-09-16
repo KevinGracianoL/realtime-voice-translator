@@ -934,3 +934,18 @@ def test_asrrealtime_init_almacena_todos_los_atributos() -> None:
     assert asr._sample_rate == 32000
     assert asr._etiqueta == "mi etiqueta"
     assert asr._post_speech_silence_duration == 2.0
+
+
+def test_asrrealtime_init_defaults() -> None:
+    """Los DEFAULTS del constructor quedan fijos (caza los mutantes de
+    default: idioma->"XXesXX", sample_rate->16001, etiqueta->"XXXX")."""
+    from unittest.mock import MagicMock
+
+    from traductor.flujo.adaptadores import AsrRealtime
+
+    asr = AsrRealtime(MagicMock())
+    assert asr._idioma == "es"
+    assert asr._input_device_index is None
+    assert asr._sample_rate == 16000
+    assert asr._etiqueta == "Flujo es"
+    assert asr._post_speech_silence_duration == 1.5

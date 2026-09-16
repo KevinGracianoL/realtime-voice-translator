@@ -555,3 +555,19 @@ def test_asrcable_init_almacena_todos_los_atributos() -> None:
     assert cable._silencio_cierre_s == 1.0
     assert cable._fragmento_max_s == 4.0
     assert cable._whisper is None
+
+
+def test_asrcable_init_defaults() -> None:
+    """Los DEFAULTS del constructor quedan fijos (caza los mutantes de
+    default: rate_cable->48001, chunk_s, umbral, silencio, fragmento)."""
+    from unittest.mock import MagicMock
+
+    from traductor.flujo.adaptadores import AsrCable
+
+    cable = AsrCable(MagicMock(), indice_cable=0)
+    assert cable._rate_cable == 48000
+    assert cable._chunk_s == 0.5
+    assert cable._umbral_actividad == 300.0
+    assert cable._silencio_cierre_s == 1.0
+    assert cable._fragmento_max_s == 4.0
+    assert cable._whisper is None
