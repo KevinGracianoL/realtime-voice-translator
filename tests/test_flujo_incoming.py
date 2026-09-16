@@ -259,3 +259,40 @@ def test_vad_corte_por_fragmento_maximo() -> None:
     turnos = alimentar([500.0, 500.0, 500.0, 500.0])
     assert len(turnos) == 1
     assert len(turnos[0][1]) == 3
+
+
+def test_vad_estado_inicial_explicito() -> None:
+    """El estado vacío se inicializa completo (mutantes de `estado.get` con
+    defaults: el inicializador es el ÚNICO punto de defaults, sin ramas que
+    mutar). Un estado con `habla` faltante arranca en silencio."""
+    import queue
+
+    from traductor.flujo.adaptadores import procesar_chunk_vad
+
+    cola: queue.Queue[tuple[int, tuple[Any, ...]]] = queue.Queue()
+    estado: dict[str, Any] = {}
+    # silencio antes de la primera voz: NO encola y el estado queda inicializado
+    procesar_chunk_vad(
+        estado,
+        "c0",
+        5.0,
+        chunk_s=0.5,
+        umbral_actividad=300.0,
+        silencio_cierre_s=1.0,
+        fragmento_max_s=12.0,
+        cola=cola,
+    )
+    assert estado == {"fragmento": [], "habla": False, "silencio_desde": 0.0}
+    assert cola.empty()
+
+
+def test_vad_cierre_resetea_estado_y_contador_persiste() -> None:
+    """Tras un cierre, el estado vuelve a silencio (mutantes de los resets de
+    `_cerrar_turno`: fragmento/habla/silencio_desde) y el contador persiste
+    (el siguiente turno toma el número siguiente — FIFO)."""
+    alimentar = _vad()
+    turnos = alimentar([500.0, 3.0, 2.0, 2.0])
+    assert [(n, len(f)) for n, f in turnos] == [(0, 4)]
+    # segundo turno: la secuencia siguiente confirma el contador persistente
+    turnos2 = alimentar([400.0, 1.0, 1.0, 1.0])
+    assert [(n, len(f)) for n, f in turnos2] == [(1, 4)]

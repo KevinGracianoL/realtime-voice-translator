@@ -167,9 +167,13 @@ def procesar_chunk_vad(
     `arr` es OPACO para la máquina (no toca numpy): la concatenación real la
     hace el worker al transcribir. Así se testea en CI sin numpy.
     """
-    fragmento: list[Any] = estado.setdefault("fragmento", [])
-    habla = estado.get("habla", False)
-    silencio_desde = estado.get("silencio_desde", 0.0)
+    if "habla" not in estado:
+        estado["fragmento"] = []
+        estado["habla"] = False
+        estado["silencio_desde"] = 0.0
+    fragmento = estado["fragmento"]
+    habla = estado["habla"]
+    silencio_desde = estado["silencio_desde"]
     if rms > umbral_actividad:
         estado["habla"] = True
         estado["silencio_desde"] = 0.0
@@ -192,7 +196,11 @@ def procesar_chunk_vad(
 
 
 def _cerrar_turno(estado: dict[str, Any], fragmento: list[Any], cola: Any) -> None:
-    """Cierra el turno: asigna el contador FIFO y encola para el worker."""
+    """Cierra el turno: asigna el contador FIFO y encola para el worker.
+
+    `contador_turnos` persiste entre turnos (no se resetea aquí): cada cierre
+    toma el siguiente número en orden de entrada.
+    """
     numero_turno = estado.get("contador_turnos", 0)
     estado["contador_turnos"] = numero_turno + 1
     cola.put((numero_turno, tuple(fragmento)))
