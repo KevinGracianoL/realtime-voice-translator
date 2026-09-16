@@ -896,7 +896,12 @@ def test_buscar_device_encuentra_por_nombre_y_canales() -> None:
     assert _buscar_device(pa, "No existe", "maxOutputChannels", 2) is None
 
 
-def test_indice_cable_output_usa_nombre_por_env(monkeypatch) -> None:
+def _registrar_nombre(recibidos: list[str], nombre: str) -> int:
+    recibidos.append(nombre)
+    return 2
+
+
+def test_indice_cable_output_usa_nombre_por_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """El incoming lee del device configurable por env TRADUCTOR_DEVICE_INCOMING
     (default 'CABLE Output'): con dos tubos, el VB-CABLE queda SOLO para el
     entrevistador y el incoming no capta el TTS del outgoing."""
@@ -915,7 +920,7 @@ def test_indice_cable_output_usa_nombre_por_env(monkeypatch) -> None:
     monkeypatch.setattr(
         mod,
         "_buscar_device",
-        lambda _pa, nombre, _canales, _valor: (recibidos.append(nombre), 2)[1],
+        lambda _pa, nombre, _canales, _valor: _registrar_nombre(recibidos, nombre),
     )
     monkeypatch.delenv("TRADUCTOR_DEVICE_INCOMING", raising=False)
     assert mod.indice_cable_output() == 2
@@ -927,7 +932,7 @@ def test_indice_cable_output_usa_nombre_por_env(monkeypatch) -> None:
     assert recibidos == ["CABLE Output (B)"]
 
 
-def test_indice_cable_output_falta_device_lanza_con_nombre(monkeypatch) -> None:
+def test_indice_cable_output_falta_device_lanza_con_nombre(monkeypatch: pytest.MonkeyPatch) -> None:
     """Sin el device configurado, el error NOMBRA el device buscado (para que
     el usuario sepa cuál instalar/configurar en TRADUCTOR_DEVICE_INCOMING)."""
     import sys
@@ -948,7 +953,7 @@ def test_indice_cable_output_falta_device_lanza_con_nombre(monkeypatch) -> None:
         mod.indice_cable_output()
 
 
-def test_salida_cable_abrir_usa_nombre_por_env(monkeypatch) -> None:
+def test_salida_cable_abrir_usa_nombre_por_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """El outgoing escribe al device configurable por env TRADUCTOR_DEVICE_OUTGOING
     (default 'CABLE Input'): con VoiceMeeter el TTS va al VAIO (mic de Meet/OBS)
     y el VB-CABLE queda libre para el entrevistador. El writer+cola FIFO del
@@ -975,7 +980,7 @@ def test_salida_cable_abrir_usa_nombre_por_env(monkeypatch) -> None:
     monkeypatch.setattr(
         mod,
         "_buscar_device",
-        lambda _pa, nombre, _canales, _valor: (recibidos.append(nombre), 2)[1],
+        lambda _pa, nombre, _canales, _valor: _registrar_nombre(recibidos, nombre),
     )
     monkeypatch.delenv("TRADUCTOR_DEVICE_OUTGOING", raising=False)
     cable = mod.SalidaCable()
@@ -990,7 +995,7 @@ def test_salida_cable_abrir_usa_nombre_por_env(monkeypatch) -> None:
     assert recibidos == ["VoiceMeeter Input"]
 
 
-def test_salida_cable_abrir_falta_device_lanza_con_nombre(monkeypatch) -> None:
+def test_salida_cable_abrir_falta_device_lanza_con_nombre(monkeypatch: pytest.MonkeyPatch) -> None:
     """Sin el device configurado, el error NOMBRA el device buscado (para que
     el usuario sepa cuál instalar/configurar en TRADUCTOR_DEVICE_OUTGOING)."""
     import sys
