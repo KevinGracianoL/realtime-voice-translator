@@ -794,6 +794,27 @@ def test_cable_cerrar_termina_writer() -> None:
     assert cable._cola is None
 
 
+def test_cable_cerrar_espera_writer_con_timeout() -> None:
+    """`cerrar` hace join del writer con timeout ACOTADO (2 s): un writer
+    colgado no bloquea el cierre (mutantes `timeout=None`/`3.0` caen)."""
+
+    class _WriterFake:
+        def __init__(self) -> None:
+            self.joins: list[object] = []
+
+        def join(self, timeout: float | None = None) -> None:
+            self.joins.append(timeout)
+
+    stream = _StreamFake()
+    cable = _cable_con_stream(stream)
+    cable._stream = None  # evita stop_stream/close sobre el fake
+    cable._pa = None
+    writer = _WriterFake()
+    cable._writer = writer
+    cable.cerrar()
+    assert writer.joins == [2.0]
+
+
 def test_cable_sin_stream_no_reproduce_guard() -> None:
     """Sin stream abierto (escalera del cable): no se reproduce nada y el
     audio ni se parsea (mutante `and` del guard lo cazaría)."""
