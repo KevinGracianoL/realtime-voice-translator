@@ -917,11 +917,14 @@ def test_indice_cable_output_usa_nombre_por_env(monkeypatch: pytest.MonkeyPatch)
             pass
 
     monkeypatch.setitem(sys.modules, "pyaudio", types.SimpleNamespace(PyAudio=lambda: _PaFake()))
-    monkeypatch.setattr(
-        mod,
-        "_buscar_device",
-        lambda _pa, nombre, _canales, _valor: _registrar_nombre(recibidos, nombre),
-    )
+
+    def _fake_buscar(pa: object, nombre: str, canales: str, valor: int) -> int | None:
+        if pa is None or (canales, valor) != ("maxInputChannels", 2):
+            return None
+        recibidos.append(nombre)
+        return 2
+
+    monkeypatch.setattr(mod, "_buscar_device", _fake_buscar)
     monkeypatch.delenv("TRADUCTOR_DEVICE_INCOMING", raising=False)
     assert mod.indice_cable_output() == 2
     assert recibidos == ["CABLE Output"]
@@ -1045,7 +1048,9 @@ def test_salida_cable_abrir_configura_stream_cola_writer(
     )
 
     def _fake_buscar(pa: object, nombre: str, canales: str, valor: int) -> int | None:
-        return 2 if pa is instancia else None  # el None -> RuntimeError abajo
+        if pa is not instancia or (canales, valor) != ("maxOutputChannels", 2):
+            return None  # None -> RuntimeError de device ausente (abrir)
+        return 2
 
     monkeypatch.setattr(mod, "_buscar_device", _fake_buscar)
     monkeypatch.delenv("TRADUCTOR_DEVICE_OUTGOING", raising=False)
