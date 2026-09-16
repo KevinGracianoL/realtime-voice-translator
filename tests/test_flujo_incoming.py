@@ -310,6 +310,47 @@ def test_vad_rama_voz_marca_habla_y_resetea_silencio() -> None:
     assert cola_v.empty()  # una sola voz no cierra
 
 
+def test_vad_frontera_longitud_rama_silencio() -> None:
+    """El cálculo de longitud del cierre en la RAMA DE SILENCIO (`cierre or
+    len(fragmento) * chunk_s > fragmento_max_s`): con fragmento de 3 chunks
+    (1.5s) y max=1.0 cierra aunque el silencio no alcance el umbral.
+
+    Mutantes: `* chunk_s`→`/` daría 3/0.5=6.0 > 1.0 (cierra igual, invisible),
+    y `>`→`>=` es la frontera — se cazan con 2 chunks (1.0s exacto, NO cierra
+    con `>`, SÍ con `>=`)."""
+    import queue
+
+    from traductor.flujo.adaptadores import procesar_chunk_vad
+
+    cola_l: queue.Queue[tuple[int, tuple[Any, ...]]] = queue.Queue()
+    estado_l: dict[str, Any] = {}
+    # voz + silencio con fragmento de 2 chunks (1.0s exacto): con `>=` el
+    # mutante cerraría; el código correcto (`>`) no (silencio aún < 1.0)
+    for rms in (500.0, 2.0):
+        procesar_chunk_vad(
+            estado_l,
+            f"c{rms}",
+            rms,
+            chunk_s=0.5,
+            umbral_actividad=300.0,
+            silencio_cierre_s=100.0,  # solo la longitud decide
+            fragmento_max_s=1.0,
+            cola=cola_l,
+        )
+    assert cola_l.empty()  # 2 chunks = 1.0s exacto NO corta (`>` estricto)
+    procesar_chunk_vad(
+        estado_l,
+        "c2.0",
+        2.0,
+        chunk_s=0.5,
+        umbral_actividad=300.0,
+        silencio_cierre_s=100.0,
+        fragmento_max_s=1.0,
+        cola=cola_l,
+    )
+    assert not cola_l.empty()  # 3 chunks = 1.5s > 1.0 SÍ corta
+
+
 def test_vad_frontera_silencio_exacto_no_cierra() -> None:
     """Silencio acumulado EXACTAMENTE en `silencio_cierre_s` NO cierra aún
     (mutante `>=` del cierre: 1.0 exacto cerraría y el estado cambiaría)."""
