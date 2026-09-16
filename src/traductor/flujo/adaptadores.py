@@ -110,12 +110,20 @@ class AsrRealtime:  # pragma: no cover - requiere micrófono + RealtimeSTT
         input_device_index: int | None = None,
         sample_rate: int = 16000,
         etiqueta: str = "",
+        post_speech_silence_duration: float = 1.5,
     ) -> None:
         self._flujo = flujo
         self._idioma = idioma
         self._input_device_index = input_device_index
         self._sample_rate = sample_rate
         self._etiqueta = etiqueta or f"Flujo {idioma}"
+        # Silencio que CIERRA un turno. El default de RealtimeSTT (~0.6 s)
+        # parte un párrafo hablado en ~5 turnos por las pausas naturales entre
+        # frases; cada turno nuevo CANCELA el TTS del anterior a media frase
+        # (bug reportado: la voz EN sale "de a 4 palabras, corte, 4 palabras").
+        # A 1.5 s el párrafo entero es UN solo turno: el TTS lo sintetiza
+        # completo sin autocancelarse. Ajustable por env sin tocar código.
+        self._post_speech_silence_duration = post_speech_silence_duration
 
     def _parcial(self, texto: str) -> None:
         self._flujo.cancelar_turno_activo()
@@ -137,6 +145,7 @@ class AsrRealtime:  # pragma: no cover - requiere micrófono + RealtimeSTT
             input_device_index=self._input_device_index,
             sample_rate=self._sample_rate,
             on_realtime_transcription_update=self._parcial,
+            post_speech_silence_duration=self._post_speech_silence_duration,
         )
         print(f"{self._etiqueta} listo: ctrl+C para salir.")
         while True:
@@ -243,7 +252,7 @@ class AsrCable:  # pragma: no cover - requiere VB-CABLE + modelo
         chunk_s: float = 0.5,
         umbral_actividad: float = 300.0,
         silencio_cierre_s: float = 1.0,
-        fragmento_max_s: float = 12.0,
+        fragmento_max_s: float = 4.0,
     ) -> None:
         self._flujo = flujo
         self._indice_cable = indice_cable
@@ -297,7 +306,21 @@ class AsrCable:  # pragma: no cover - requiere VB-CABLE + modelo
                 )
                 buf.seek(0)
                 try:
-                    segmentos, _ = whisper.transcribe(buf, language="en")
+                    # condition_on_previous_text=False: cada fragmento se
+                    # transcribe DESDE CERO (no arrastra el texto anterior como
+                    # prompt) — corta el bucle de alucinación donde whisper
+                    # repite una frase fantasma turno tras turno. vad_filter:
+                    # Silero recorta el silencio ANTES de transcribir, así el
+                    # modelo no "rellena" los tramos mudos con frases del corpus
+                    # (créditos de subtítulos, "thank you"). Ambos matan la
+                    # alucinación en el ORIGEN, con cualquier audio (no solo el
+                    # WAV de la demo). Ver traductor.asr.alucinacion (2ª capa).
+                    segmentos, _ = whisper.transcribe(
+                        buf,
+                        language="en",
+                        condition_on_previous_text=False,
+                        vad_filter=True,
+                    )
                     texto_en = " ".join(s.text for s in segmentos).strip()
                 except Exception as exc:  # noqa: BLE001 - el flujo no enmudece sin log
                     print(

@@ -515,3 +515,59 @@ def test_habla_real_con_thank_you_dentro_si_se_muestra() -> None:
     flujo, teleprompter = _flujo()
     assert flujo.segmento_final("thank you for taking the time to meet me today") is True
     assert len(teleprompter.finales) == 1
+
+
+def test_asrcable_fragmento_max_default_corto() -> None:
+    """El default de fragmento_max_s es 4.0 (no 12.0): whisper tiny no alucina
+    con fragmentos cortos. Un default largo revive el bug de la demo (12.5 s →
+    'I don't know what you're talking about' x3). Fija el default para que no
+    se revierta por accidente."""
+    from unittest.mock import MagicMock
+
+    from traductor.flujo.adaptadores import AsrCable
+
+    cable = AsrCable(MagicMock(), indice_cable=0)
+    assert cable._fragmento_max_s == 4.0
+
+
+def test_asrcable_init_almacena_todos_los_atributos() -> None:
+    """El constructor guarda TODO lo que recibe (caza los mutantes de
+    asignación/borrado del __init__, no solo el atributo nuevo)."""
+    from unittest.mock import MagicMock
+
+    from traductor.flujo.adaptadores import AsrCable
+
+    flujo = MagicMock()
+    cable = AsrCable(
+        flujo,
+        indice_cable=5,
+        rate_cable=48000,
+        chunk_s=0.5,
+        umbral_actividad=300.0,
+        silencio_cierre_s=1.0,
+        fragmento_max_s=4.0,
+    )
+    assert cable._flujo is flujo
+    assert cable._indice_cable == 5
+    assert cable._rate_cable == 48000
+    assert cable._chunk_s == 0.5
+    assert cable._umbral_actividad == 300.0
+    assert cable._silencio_cierre_s == 1.0
+    assert cable._fragmento_max_s == 4.0
+    assert cable._whisper is None
+
+
+def test_asrcable_init_defaults() -> None:
+    """Los DEFAULTS del constructor quedan fijos (caza los mutantes de
+    default: rate_cable->48001, chunk_s, umbral, silencio, fragmento)."""
+    from unittest.mock import MagicMock
+
+    from traductor.flujo.adaptadores import AsrCable
+
+    cable = AsrCable(MagicMock(), indice_cable=0)
+    assert cable._rate_cable == 48000
+    assert cable._chunk_s == 0.5
+    assert cable._umbral_actividad == 300.0
+    assert cable._silencio_cierre_s == 1.0
+    assert cable._fragmento_max_s == 4.0
+    assert cable._whisper is None

@@ -37,6 +37,37 @@ def test_repeticion_patologica() -> None:
     assert es_alucinacion("the the the the the") is True
 
 
+def test_frase_repetida_ngramas() -> None:
+    """Bug real de la demo: whisper repite la MISMA frase sobre audio mezclado."""
+    catch = "I'm going to catch you"
+    assert es_alucinacion(f"{catch}, {catch}, {catch}") is True
+    assert es_alucinacion("okay so okay so okay so") is True
+    assert es_alucinacion("no no no") is True
+    # n-grama de longitud 1 repetido 3x con basura alrededor (no pasa por la
+    # regla del token dominante: 3/5 = 0.6 <= 0.6): depende SOLO de la 2a capa
+    assert es_alucinacion("no no no yes yes") is True
+
+
+def test_frase_repetida_robusta_a_basura() -> None:
+    """El bucle de whisper con basura alrededor: 3 copias + cola distinta.
+
+    DeepSeek midió 'I don't know what you're talking about' x3 con tiny sobre
+    un fragmento de 12.5 s. El filtro debe atraparlo aunque whisper varíe el
+    final (no exige que TODO el texto sea copias exactas)."""
+    frase = "I don't know what you're talking about"
+    assert es_alucinacion(f"{frase} {frase} {frase}") is True
+    assert es_alucinacion(f"{frase} {frase} {frase} yeah now") is True
+    # con solo DOS copias no se marca (puede ser énfasis real): exige 3+
+    assert es_alucinacion(f"{frase} {frase}") is False
+
+
+def test_frase_repetida_no_afecta_habla_real() -> None:
+    """Una intervención real NO es k copias exactas de un bloque."""
+    assert es_alucinacion("tell me tell me about your last project") is False
+    assert es_alucinacion("what what is your experience") is False
+    assert es_alucinacion("very very good candidate for the role") is False
+
+
 def test_habla_real_pasa() -> None:
     assert es_alucinacion("Tell me about your experience with distributed systems") is False
     assert es_alucinacion("What is your greatest weakness?") is False
@@ -60,7 +91,17 @@ def test_repeticion_frontera_veces_exactas() -> None:
     assert es_alucinacion("you you you the") is True
 
 
+def test_repeticion_veces_tres_sin_consecutivas() -> None:
+    # veces == 3 y > 60% SIN 3+ consecutivas: la 2ª capa NO lo marca, así que
+    # la regla del token dominante es la que decide — caza `>= 3`->`>= 4` y
+    # `> 0.6`->`> 1.6` (con consecutivas la 2ª capa los enmascararía)
+    assert es_alucinacion("you you the you") is True
+
+
 def test_repeticion_frontera_60_porciento_exacto() -> None:
-    # 3/5 == 0.6 EXACTO: no es patológico (regla estricta `> 0.6`); los
-    # mutantes `>= 0.6` y `/` -> `*` caen aquí
-    assert es_alucinacion("you you you the so") is False
+    # 3/5 == 0.6 EXACTO sin repetición CONSECUTIVA: NO es patológico (regla
+    # estricta `> 0.6`); caza los mutantes `>= 0.6` y `/` -> `*`. (Con 3
+    # consecutivas la 2ª capa del n-grama sí lo marca: ver
+    # test_frase_repetida_ngramas.)
+    assert es_alucinacion("you there you here you") is False
+    assert es_alucinacion("you the you me") is False
