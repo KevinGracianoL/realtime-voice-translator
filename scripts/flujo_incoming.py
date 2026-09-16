@@ -42,7 +42,7 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
 
     flujo = FlujoIncoming(
         traducir=traducir_en_es,
-        teleprompter=TeleprompterHttp(),
+        teleprompter=TeleprompterHttp(fuente="entrevistador"),
     )
     try:
         AsrCable(
