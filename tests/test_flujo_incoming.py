@@ -284,6 +284,32 @@ def test_vad_frontera_umbral_exacto_no_dispara() -> None:
     assert cola_u.empty()
 
 
+def test_vad_rama_voz_marca_habla_y_resetea_silencio() -> None:
+    """Un chunk con VOZ deja el estado en habla=True, silencio_desde=0.0 y el
+    chunk en el fragmento (mutantes de las asignaciones de la rama de voz:
+    `habla=False` o `silencio_desde != 0` romperían estos asserts)."""
+    import queue
+
+    from traductor.flujo.adaptadores import procesar_chunk_vad
+
+    cola_v: queue.Queue[tuple[int, tuple[Any, ...]]] = queue.Queue()
+    estado_v: dict[str, Any] = {}
+    procesar_chunk_vad(
+        estado_v,
+        "c-voz",
+        500.0,
+        chunk_s=0.5,
+        umbral_actividad=300.0,
+        silencio_cierre_s=1.0,
+        fragmento_max_s=12.0,
+        cola=cola_v,
+    )
+    assert estado_v["habla"] is True
+    assert estado_v["silencio_desde"] == 0.0
+    assert estado_v["fragmento"] == ["c-voz"]
+    assert cola_v.empty()  # una sola voz no cierra
+
+
 def test_vad_frontera_silencio_exacto_no_cierra() -> None:
     """Silencio acumulado EXACTAMENTE en `silencio_cierre_s` NO cierra aún
     (mutante `>=` del cierre: 1.0 exacto cerraría y el estado cambiaría)."""
