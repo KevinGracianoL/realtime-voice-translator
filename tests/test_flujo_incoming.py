@@ -528,3 +528,30 @@ def test_asrcable_fragmento_max_default_corto() -> None:
 
     cable = AsrCable(MagicMock(), indice_cable=0)
     assert cable._fragmento_max_s == 4.0
+
+
+def test_asrcable_init_almacena_todos_los_atributos() -> None:
+    """El constructor guarda TODO lo que recibe (caza los mutantes de
+    asignación/borrado del __init__, no solo el atributo nuevo)."""
+    from unittest.mock import MagicMock
+
+    from traductor.flujo.adaptadores import AsrCable
+
+    flujo = MagicMock()
+    cable = AsrCable(
+        flujo,
+        indice_cable=5,
+        rate_cable=48000,
+        chunk_s=0.5,
+        umbral_actividad=300.0,
+        silencio_cierre_s=1.0,
+        fragmento_max_s=4.0,
+    )
+    assert cable._flujo is flujo
+    assert cable._indice_cable == 5
+    assert cable._rate_cable == 48000
+    assert cable._chunk_s == 0.5
+    assert cable._umbral_actividad == 300.0
+    assert cable._silencio_cierre_s == 1.0
+    assert cable._fragmento_max_s == 4.0
+    assert cable._whisper is None

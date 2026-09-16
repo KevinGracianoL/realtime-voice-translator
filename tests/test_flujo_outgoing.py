@@ -910,3 +910,27 @@ def test_asrrealtime_post_speech_silence_default() -> None:
     # override explícito respetado
     asr2 = AsrRealtime(MagicMock(), post_speech_silence_duration=0.8)
     assert asr2._post_speech_silence_duration == 0.8
+
+
+def test_asrrealtime_init_almacena_todos_los_atributos() -> None:
+    """El constructor guarda TODO lo que recibe (caza los mutantes de
+    asignación/borrado del __init__, no solo el atributo nuevo)."""
+    from unittest.mock import MagicMock
+
+    from traductor.flujo.adaptadores import AsrRealtime
+
+    flujo = MagicMock()
+    asr = AsrRealtime(
+        flujo,
+        idioma="es",
+        input_device_index=7,
+        sample_rate=32000,
+        etiqueta="mi etiqueta",
+        post_speech_silence_duration=2.0,
+    )
+    assert asr._flujo is flujo
+    assert asr._idioma == "es"
+    assert asr._input_device_index == 7
+    assert asr._sample_rate == 32000
+    assert asr._etiqueta == "mi etiqueta"
+    assert asr._post_speech_silence_duration == 2.0
