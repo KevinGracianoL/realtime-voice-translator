@@ -123,14 +123,22 @@ def _es_frase_repetida(tokens: list[str]) -> bool:
     `fragmento_max_s`); la cura de raíz es acortar el fragmento / meter pausas
     en el input (ver AsrCable), no filtrar el output. Este filtro es el
     cinturón; la pausa en el input son los tirantes.
+
+    Los dos `# pragma: no mutate` de los límites de los bucles son mutantes
+    EQUIVALENTES (no cazables por test): `range(n - longitud)` -> `range(n +
+    longitud)` solo añade inicios donde el while interno no entra (el primer
+    bloque parcial corta en `n` y un slice parcial de longitud menor nunca es
+    `==` al bloque completo), y `j + longitud <= n` -> `j - longitud <= n`
+    solo itera de más comparando slices vacíos/parciales, que tampoco igualan
+    al bloque. En ambos casos el resultado observable es idéntico.
     """
     n = len(tokens)
     for longitud in range(1, n // 3 + 1):
-        for inicio in range(n - longitud):
+        for inicio in range(n - longitud):  # pragma: no mutate
             bloque = tokens[inicio : inicio + longitud]
             repeticiones = 1
             j = inicio + longitud
-            while j + longitud <= n and tokens[j : j + longitud] == bloque:
+            while j + longitud <= n and tokens[j : j + longitud] == bloque:  # pragma: no mutate
                 repeticiones += 1
                 j += longitud
             if repeticiones >= 3:
