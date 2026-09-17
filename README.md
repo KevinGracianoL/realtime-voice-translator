@@ -237,6 +237,15 @@ silencio cierra tu turno → el párrafo completo es UN turno, sin entrecortes),
 `TRADUCTOR_FRAGMENTO_MAX_S` (4 s máx. por fragmento del incoming → whisper `tiny` no
 alucina) y `TRADUCTOR_UMBRAL_RMS` (300, actividad de voz del cable).
 
+**Nota técnica — por qué MME y no WASAPI (bug cazado con un tono puro de 440 Hz):**
+el motor de VB-Audio corre internamente a **44100**. El mismo device expuesto por
+WASAPI a 48000 pasa por un resampler que en Windows inserta **saltos de fase cada
+~20 ms**: audio con clics inaudibles al oído pero que rompen la transcripción
+(whisper oía "hard bug you solved" como palabras distintas). El código **prefiere
+los devices MME** (tasa nativa 44100) automáticamente: el tono de prueba sale
+**440.0 Hz exactos por MME** y 522 Hz con saltos por WASAPI. Si eliges devices a
+mano, usa los MME.
+
 ---
 
 ## 📁 Estructura
@@ -265,7 +274,7 @@ alucina) y `TRADUCTOR_UMBRAL_RMS` (300, actividad de voz del cable).
 ├── scripts/                    # hardware, traducción, harness de gates
 ├── setup_dlls.py               # CUDA 12/13 coexistiendo (Windows, locks AV)
 ├── docs/                       # 16 ADRs con evidencia medida
-├── tests/                      # 380 tests, 100 % cov, mutantes en CI
+├── tests/                      # 382 tests, 100 % cov, mutantes en CI
 └── .github/workflows/ci.yml    # 5 gates que fallan el PR si algo se rompe
 ```
 
