@@ -2,3 +2,4 @@ fastapi==0.115.0
 uvicorn==0.30.0
 httpx==0.28.1
 pydantic==2.13.4
+numpy==2.4.4  # adaptadores._pcm_f32_a_wav (cubierto por los tests de gates)
