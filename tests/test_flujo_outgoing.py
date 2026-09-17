@@ -1196,3 +1196,151 @@ def test_asrrealtime_init_defaults() -> None:
     assert asr._sample_rate == 16000
     assert asr._etiqueta == "Flujo es"
     assert asr._post_speech_silence_duration == 1.5
+
+
+def test_salida_cable_abrir_usa_tasa_nativa(monkeypatch: pytest.MonkeyPatch) -> None:
+    """La tasa del stream es la NATIVA del device (44100 en MME), no el 48000
+    del constructor: el resampler WASAPI a 48000 pela el audio (PR #33).
+    Verifica tambien que el bloque de reproduccion sale de la tasa real:
+    44100 * 4 bytes * 0.2 s = 35280 bytes."""
+    import sys
+    import time
+    import types
+
+    import traductor.flujo.adaptadores as mod
+
+    abierto: list[dict[str, object]] = []
+    escritos: list[bytes] = []
+
+    class _StreamFake:
+        def write(self, bloque: bytes) -> None:
+            escritos.append(bloque)
+
+    class _PaFake:
+        def open(self, **kwargs: object) -> object:
+            abierto.append(kwargs)
+            return _StreamFake()
+
+        def get_device_info_by_index(self, _i: int) -> dict[str, object]:
+            return {"defaultSampleRate": 44100.0, "hostApi": 0}
+
+        def terminate(self) -> None:
+            pass
+
+    monkeypatch.setitem(
+        sys.modules, "pyaudio", types.SimpleNamespace(PyAudio=lambda: _PaFake(), paInt16=16)
+    )
+    monkeypatch.setattr(mod, "_buscar_device", lambda *_a, **_k: 2)
+    monkeypatch.delenv("TRADUCTOR_DEVICE_OUTGOING", raising=False)
+    cable = mod.SalidaCable(bloque_s=0.2)
+    cable.abrir()
+    assert abierto[0]["rate"] == 44100
+    assert cable._rate_efectiva() == 44100
+    cable._audio_a_pcm_cable = lambda audio: bytes(100000)  # type: ignore[method-assign]
+    cable.reproducir(b"wav", 1.0, "x")
+    limite = time.time() + 1.0
+    while len(escritos) < 3 and time.time() < limite:
+        time.sleep(0.005)
+    assert [len(b) for b in escritos] == [35280, 35280, 29440]
+
+
+def test_pcm_f32_a_wav_roundtrip() -> None:
+    """PCM float32 mono -> WAV int16 mono (con clip a [-1, 1])."""
+    import io
+    import wave
+
+    import numpy as np
+
+    from traductor.flujo.adaptadores import _pcm_f32_a_wav
+
+    pcm = np.array([0.0, 0.5, -0.5, 1.5], dtype=np.float32).tobytes()
+    datos, duracion = _pcm_f32_a_wav(pcm, 16000)
+    assert duracion == 4 / 16000
+    with wave.open(io.BytesIO(datos), "rb") as w:
+        assert w.getnchannels() == 1
+        assert w.getsampwidth() == 2
+        assert w.getframerate() == 16000
+        assert w.getnframes() == 4
+        frames = np.frombuffer(w.readframes(4), dtype=np.int16)
+    assert frames.tolist() == [0, 16383, -16383, 32767]
+
+
+def test_perfil_por_defecto_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    from traductor.flujo.adaptadores import perfil_por_defecto
+
+    monkeypatch.delenv("TRADUCTOR_PERFIL_ID", raising=False)
+    assert perfil_por_defecto() == "kevin"
+    monkeypatch.setenv("TRADUCTOR_PERFIL_ID", "aldo")
+    assert perfil_por_defecto() == "aldo"
+
+
+def test_validar_arranque_real_ok_y_bloqueado(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cubre el happy path y el bloqueo de la validacion offline (ADR-014/015)."""
+    from types import SimpleNamespace
+
+    import traductor.flujo.adaptadores as mod
+    import traductor.flujo.outgoing as outgoing
+    import traductor.traduccion.argos as argos
+
+    monkeypatch.setattr(argos, "traducir", lambda _t, _o, _d: "ok")
+    monkeypatch.setattr(
+        outgoing,
+        "validar_arranque",
+        lambda _t: SimpleNamespace(disponible=True, detalle=""),
+    )
+    assert mod.validar_arranque_real() is True
+
+    monkeypatch.setattr(
+        outgoing,
+        "validar_arranque",
+        lambda _t: SimpleNamespace(disponible=False, detalle="sin mwt"),
+    )
+    assert mod.validar_arranque_real() is False
+
+
+def test_stream_cancelado_antes_del_primer_chunk_no_enruta() -> None:
+    """Si el turno se supera ANTES de que salga el primer chunk del stream,
+    nada se enruta: la escalera NO se prueba (turno muerto) y el flujo
+    devuelve False. Cubre el corte de cancelacion de _enrutar_stream y el
+    corte de escalera en _procesar."""
+    teleprompter = _TeleprompterFake()
+    salida = _SalidaFake()
+    flujo = FlujoOutgoing(
+        traducir=lambda es: f"EN({es})",
+        tts_primario=_TtsStreamFake(),
+        tts_fallback=None,
+        teleprompter=teleprompter,
+        salida_audio=salida,
+    )
+
+    def sintetizar_cancelando(texto_en: str) -> Any | None:
+        def generador() -> Any:
+            flujo.cancelar_turno_activo()  # el turno muere antes del primer chunk
+            yield (b"wav-1", 1.0, "clonado")
+
+        return generador()
+
+    tts = flujo.tts_primario
+    assert isinstance(tts, EtapaTtsStream)
+    tts.sintetizar_stream = sintetizar_cancelando  # type: ignore[method-assign]
+    assert flujo.segmento_final("texto") is None  # cancelado: nada se enruta
+    assert salida.reproducidos == []
+
+
+def test_tts_no_stream_con_artefactos_no_reproduce_y_escala() -> None:
+    """Camino NO-stream con audio sospechoso: se marca degradado, NO se
+    reproduce jamas y se cae a subtitulos (cubre el continue de _procesar)."""
+    teleprompter = _TeleprompterFake()
+    salida = _SalidaFake()
+    flujo = FlujoOutgoing(
+        traducir=lambda es: "target text",
+        tts_primario=_TtsFake(ok=True),
+        tts_fallback=_TtsFake(ok=True),
+        teleprompter=teleprompter,
+        salida_audio=salida,
+        verificar_artefactos=lambda _audio: "target text y mucha basura extra",
+        max_sobrantes=0,
+    )
+    assert flujo.segmento_final("hola") == NIVEL_SUBTITULOS  # solo subtitulos
+    assert salida.reproducidos == []
+    assert flujo.ultimo_turno_degradado is True

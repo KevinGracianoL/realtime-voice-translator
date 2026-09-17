@@ -367,12 +367,15 @@ class AsrCable:  # pragma: no cover - requiere VB-CABLE + modelo
         estado: dict[str, Any] = {}
         while True:
             datos = stream.read(int(rate * self._chunk_s), exception_on_overflow=False)
-            # estéreo -> canal izquierdo (ver comentario del pa.open)
-            arr = np.frombuffer(datos, dtype=np.int16).astype(np.float32)[0::2]
-            rms = float(np.sqrt(np.mean(arr**2)))
+            # estéreo -> MONO con downmix (L+R)/2: tomar solo el canal
+            # izquierdo descartaba en silencio las fuentes que llegan por el
+            # derecho (revisión del PR #33); un downmix cuesta lo mismo.
+            arr = np.frombuffer(datos, dtype=np.int16).astype(np.float32)
+            mono = (arr[0::2] + arr[1::2]) / 2.0
+            rms = float(np.sqrt(np.mean(mono**2)))
             procesar_chunk_vad(
                 estado,
-                arr,
+                mono,
                 rms,
                 chunk_s=self._chunk_s,
                 umbral_actividad=self._umbral_actividad,

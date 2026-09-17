@@ -41,23 +41,27 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 
+    import os
+
     import numpy as np
     import pyaudio
+
+    from traductor.flujo.adaptadores import _buscar_device
 
     wav = Path(__file__).resolve().parent / "audio" / "entrevistador_en.wav"
     muestras, sr = sf.read(str(wav), dtype="float32")
     duracion_s = len(muestras) / sr
 
     pa = pyaudio.PyAudio()
-    try:
-        indice = next(
-            i
-            for i in range(pa.get_device_count())
-            if "CABLE Input" in str(pa.get_device_info_by_index(i)["name"])
-            and pa.get_device_info_by_index(i)["maxOutputChannels"] == 2
-        )
-    except StopIteration as exc:
-        raise RuntimeError("VB-CABLE no disponible (CABLE Input)") from exc
+    # _buscar_device prefiere el device MME (16 canales, 44100 nativo): el
+    # duplicado WASAPI a 48000 pasa por el resampler defectuoso y pela el
+    # audio (ver hallazgo del PR #33). Nombre configurable por env para
+    # alinear con TRADUCTOR_DEVICE_INCOMING del flujo incoming.
+    nombre = os.environ.get("TRADUCTOR_DEVICE_ENTREVISTADOR", "CABLE Input")
+    indice = _buscar_device(pa, nombre, "maxOutputChannels", 2)
+    if indice is None:
+        pa.terminate()
+        raise RuntimeError(f"El device de salida '{nombre}' no está disponible (VB-CABLE)")
     rate_cable = int(pa.get_device_info_by_index(indice)["defaultSampleRate"])
     # resample LINEAL a la tasa del cable + ESTÉREO (mismo patrón que
     # SalidaCable): escribir mono a un device estéreo deforma el audio
