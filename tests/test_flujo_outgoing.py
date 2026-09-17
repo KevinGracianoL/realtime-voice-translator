@@ -1290,6 +1290,35 @@ def test_validar_arranque_real_ok_y_bloqueado(monkeypatch: pytest.MonkeyPatch) -
     assert mod.validar_arranque_real() is False
 
 
+def test_validar_arranque_real_imprime_su_estado(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """La salida distingue OK de BLOQUEADO (caza los mutantes de los prints,
+    que no cambian el valor de retorno)."""
+    from types import SimpleNamespace
+
+    import traductor.flujo.adaptadores as mod
+    import traductor.flujo.outgoing as outgoing
+
+    monkeypatch.setattr(
+        outgoing,
+        "validar_arranque",
+        lambda _t: SimpleNamespace(disponible=False, detalle="sin mwt"),
+    )
+    assert mod.validar_arranque_real() is False
+    bloqueado = capsys.readouterr().out
+    assert "BLOQUEADO" in bloqueado
+    assert "sin mwt" in bloqueado
+
+    monkeypatch.setattr(
+        outgoing,
+        "validar_arranque",
+        lambda _t: SimpleNamespace(disponible=True, detalle=""),
+    )
+    assert mod.validar_arranque_real() is True
+    assert "OK (mwt precargado)" in capsys.readouterr().out
+
+
 def test_stream_cancelado_antes_del_primer_chunk_no_enruta() -> None:
     """Si el turno se supera ANTES de que salga el primer chunk del stream,
     nada se enruta: la escalera NO se prueba (turno muerto) y el flujo

@@ -841,6 +841,9 @@ def _buscar_device(pa: Any, nombre_parcial: str, canales: str, valor: int) -> in
     if not candidatos:
         return None
     for i, info in candidatos:
+        # pragma: no mutate - el default del .get solo aplica si el dict no
+        # trae "hostApi"; con cualquier valor != 0 (pyaudio siempre lo trae)
+        # el resultado es el mismo -> mutar -1 a +1/-2 es equivalente.
         if int(info.get("hostApi", -1)) == 0:  # MME
             return i
     return candidatos[0][0]
