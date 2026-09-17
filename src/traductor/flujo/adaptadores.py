@@ -119,6 +119,8 @@ class AsrRealtime:  # pragma: no cover - requiere micrófono + RealtimeSTT
         sample_rate: int = 16000,
         etiqueta: str = "",
         post_speech_silence_duration: float = 1.5,
+        modelo: str = "small",
+        device: str = "cuda",
     ) -> None:
         self._flujo = flujo
         self._idioma = idioma
@@ -132,6 +134,16 @@ class AsrRealtime:  # pragma: no cover - requiere micrófono + RealtimeSTT
         # A 1.5 s el párrafo entero es UN solo turno: el TTS lo sintetiza
         # completo sin autocancelarse. Ajustable por env sin tocar código.
         self._post_speech_silence_duration = post_speech_silence_duration
+        # `small` en vez de `tiny`: el tiny transcribe la voz ES impreciso
+        # ("un bug" -> "a walk", "Hoy" -> "todaoooaaayyy") y ese texto entra
+        # al traductor; small es el mismo modelo validado del incoming
+        # (ADR-012) y cabe en la GPU junto al worker. Ajustable por env.
+        self._modelo = modelo
+        # `device` del ASR (cuda o cpu): en GPUs de 4 GB el XTTS + el whisper
+        # del incoming saturan la VRAM y el streaming del TTS sale con pausas;
+        # mover el ASR del outgoing a CPU deja la GPU para el TTS y el
+        # whisper EN. Ajustable por env (TRADUCTOR_ASR_DEVICE).
+        self._device = device
 
     def _parcial(self, texto: str) -> None:
         self._flujo.cancelar_turno_activo()
@@ -156,9 +168,9 @@ class AsrRealtime:  # pragma: no cover - requiere micrófono + RealtimeSTT
         from RealtimeSTT import AudioToTextRecorder
 
         grabador = AudioToTextRecorder(
-            model="tiny",
+            model=self._modelo,
             language=self._idioma,
-            device="cuda",
+            device=self._device,
             compute_type="int8",
             input_device_index=self._input_device_index,
             sample_rate=self._sample_rate,

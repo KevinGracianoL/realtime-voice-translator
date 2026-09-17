@@ -1174,6 +1174,8 @@ def test_asrrealtime_init_almacena_todos_los_atributos() -> None:
         sample_rate=32000,
         etiqueta="mi etiqueta",
         post_speech_silence_duration=2.0,
+        modelo="base",
+        device="cpu",
     )
     assert asr._flujo is flujo
     assert asr._idioma == "es"
@@ -1181,6 +1183,8 @@ def test_asrrealtime_init_almacena_todos_los_atributos() -> None:
     assert asr._sample_rate == 32000
     assert asr._etiqueta == "mi etiqueta"
     assert asr._post_speech_silence_duration == 2.0
+    assert asr._modelo == "base"
+    assert asr._device == "cpu"
 
 
 def test_asrrealtime_init_defaults() -> None:
@@ -1196,6 +1200,9 @@ def test_asrrealtime_init_defaults() -> None:
     assert asr._sample_rate == 16000
     assert asr._etiqueta == "Flujo es"
     assert asr._post_speech_silence_duration == 1.5
+    # small (no tiny): tiny confundia "un bug" con "a walk" en la voz ES
+    assert asr._modelo == "small"
+    assert asr._device == "cuda"
 
 
 def test_salida_cable_abrir_usa_tasa_nativa(monkeypatch: pytest.MonkeyPatch) -> None:

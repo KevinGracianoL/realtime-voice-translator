@@ -78,6 +78,14 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
                 if os.environ.get("TRADUCTOR_MIC_INDEX")
                 else None
             ),
+            # modelo ASR por env: small (default) transcribe la voz ES con
+            # fidelidad; tiny confundía "un bug" con "a walk" y ese texto
+            # entraba al traductor.
+            modelo=os.environ.get("TRADUCTOR_MODELO_ASR", "small"),
+            # device del ASR por env: en GPUs de 4 GB, "cpu" deja la GPU para
+            # el XTTS y el whisper del incoming (el streaming del TTS deja de
+            # salir con pausas por contención de VRAM).
+            device=os.environ.get("TRADUCTOR_ASR_DEVICE", "cuda"),
         ).correr()
     except KeyboardInterrupt:
         print("\nFlujo detenido.")
