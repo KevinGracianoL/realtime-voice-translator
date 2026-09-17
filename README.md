@@ -244,6 +244,13 @@ no alucina; el cambio de `tiny` a `small` costó ~550-860 ms medidos por fragmen
 de 3 s, y cortó las alucinaciones del corpus) y `TRADUCTOR_UMBRAL_RMS` (300,
 actividad de voz del cable).
 
+Otros ajustes por env: `TRADUCTOR_MODELO_ASR` (default `small` para la voz ES del
+outgoing; `tiny` confundía "un bug" con "a walk") y `TRADUCTOR_ASR_DEVICE`
+(`cuda` o `cpu`): en GPUs de 4 GB conviene **`cpu`** para el ASR del outgoing y
+dejar la GPU al TTS y al whisper del incoming. Con micrófono de laptop, el
+`TRADUCTOR_SILENCIO_TURNO_S` recomendado sube a **2.5 s** (las pausas naturales
+entre frases de un párrafo no deben cerrar el turno).
+
 **Nota técnica — por qué MME y no WASAPI (bug cazado con un tono puro de 440 Hz):**
 el motor de VB-Audio corre internamente a **44100**. El mismo device expuesto por
 WASAPI a 48000 pasa por un resampler que en Windows inserta **saltos de fase cada
