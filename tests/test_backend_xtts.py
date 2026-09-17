@@ -63,6 +63,12 @@ def test_frases_parte_por_puntuacion_fuerte() -> None:
     assert _frases("   ") == []
     # la cola sin puntuar se conserva
     assert _frases("Uno. Dos sin punto") == ["Uno.", "Dos sin punto"]
+    # cada signo fuerte parte EN MEDIO (no solo al final: la cola tambien se
+    # agrega, asi que al final un signo mutado no cambiaria el resultado)
+    assert _frases("Hola! Mundo.") == ["Hola!", "Mundo."]
+    assert _frases("¿Que? Si.") == ["¿Que?", "Si."]
+    assert _frases("Bueno… seguimos") == ["Bueno…", "seguimos"]
+    assert _frases("Uno; dos.") == ["Uno;", "dos."]
 
 
 def test_sintetizar_stream_por_frase_batch() -> None:

@@ -124,7 +124,7 @@ class BackendXtts:
                 language=self._idioma_salida,
                 split_sentences=False,
             )
-            yield pcm_a_audio_result(_chunk_a_muestras(wav), SR_XTTS)
+            yield pcm_a_audio_result(_chunk_a_muestras(wav))  # sr default = SR_XTTS
 
     def verificar_salud(self) -> Salud:
         """Estado SIN efectos secundarios: no carga el modelo (r1 PR #16).
