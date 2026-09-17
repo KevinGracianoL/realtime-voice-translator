@@ -1316,7 +1316,10 @@ def test_validar_arranque_real_imprime_su_estado(
         lambda _t: SimpleNamespace(disponible=True, detalle=""),
     )
     assert mod.validar_arranque_real() is True
-    assert "OK (mwt precargado)" in capsys.readouterr().out
+    # igualdad EXACTA: caza los mutantes que envuelven el string con "XX"
+    assert capsys.readouterr().out.strip() == (
+        "Arranque offline de la traducción: OK (mwt precargado)"
+    )
 
 
 def test_stream_cancelado_antes_del_primer_chunk_no_enruta() -> None:
