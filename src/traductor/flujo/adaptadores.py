@@ -34,8 +34,16 @@ class FlujoASR(Protocol):
     def segmento_final(self, texto: str, /) -> object: ...
 
 
-def _pcm_f32_a_wav(datos: bytes, sample_rate: int) -> tuple[bytes, float]:
-    """PCM float32 mono → WAV int16 mono (el flujo trabaja con WAV)."""
+def _pcm_f32_a_wav(  # pragma: no cover - numpy (mutmut no puede con el re-import)
+    datos: bytes, sample_rate: int
+) -> tuple[bytes, float]:
+    """PCM float32 mono → WAV int16 mono (el flujo trabaja con WAV).
+
+    Sin test en gates: numpy se importa PEREZOSAMENTE aquí (el core del módulo
+    no exige numpy) y mutmut re-importa el módulo por mutante — numpy 2 lanza
+    "cannot load module more than once per process" en ese ciclo. Igual que el
+    resto del código hardware de este archivo, se ejercita en la máquina.
+    """
     import io
     import wave
 

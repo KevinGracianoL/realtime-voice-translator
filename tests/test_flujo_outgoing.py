@@ -1323,24 +1323,3 @@ def test_tts_no_stream_con_artefactos_no_reproduce_y_escala() -> None:
     assert flujo.segmento_final("hola") == NIVEL_SUBTITULOS  # solo subtitulos
     assert salida.reproducidos == []
     assert flujo.ultimo_turno_degradado is True
-
-
-def test_pcm_f32_a_wav_roundtrip_sin_numpy_hardcodeado() -> None:
-    """El PCM de entrada se arma con struct (sin numpy en el test, por si el
-    entorno de gates no lo tiene instalado)."""
-    import io
-    import struct
-    import wave
-
-    from traductor.flujo.adaptadores import _pcm_f32_a_wav
-
-    pcm = struct.pack("4f", 0.0, 0.5, -0.5, 1.5)  # 1.5 clipea a 1.0
-    datos, duracion = _pcm_f32_a_wav(pcm, 16000)
-    assert duracion == 4 / 16000
-    with wave.open(io.BytesIO(datos), "rb") as w:
-        assert w.getnchannels() == 1
-        assert w.getsampwidth() == 2
-        assert w.getframerate() == 16000
-        assert w.getnframes() == 4
-        crudos = w.readframes(4)
-    assert struct.unpack("<4h", crudos) == (0, 16383, -16383, 32767)
