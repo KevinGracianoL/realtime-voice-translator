@@ -19,7 +19,7 @@ La lista se curó de las alucinaciones documentadas del modelo `tiny` en inglés
 de cierre de video y muletillas de un solo token. La comparación es sobre el
 texto NORMALIZADO (minúsculas, sin puntuación ni espacios de más).
 
-Con `small` (el modelo que usa el incoming desde el PR #29) las alucinaciones
+Con `small` (el modelo que usa el incoming desde el PR #33) las alucinaciones
 del corpus son menos frecuentes y más cortas, pero la segunda capa SIGUE
 activa: es barata (función pura sobre texto ya transcrito) y actúa de red si
 el modelo vuelve a "rellenar" un tramo mudo con una frase fantasma.

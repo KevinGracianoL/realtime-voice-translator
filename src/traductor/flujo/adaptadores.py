@@ -813,6 +813,11 @@ def perfil_por_defecto() -> str:
     return id_
 
 
+# Default del `.get("hostApi")` cuando el dict no lo trae: cualquier valor
+# != 0 da "no es MME" -> mutarlo (+1/-2) es equivalente y no lo caza un test.
+_HOST_API_NO_MME = -1  # pragma: no mutate
+
+
 def _buscar_device(pa: Any, nombre_parcial: str, canales: str, valor: int) -> int | None:
     """Índice del device de pyaudio cuyo nombre contiene `nombre_parcial` y
     cuya entrada/salida tiene AL MENOS `valor` canales; None si no existe
@@ -841,10 +846,7 @@ def _buscar_device(pa: Any, nombre_parcial: str, canales: str, valor: int) -> in
     if not candidatos:
         return None
     for i, info in candidatos:
-        # El default del .get solo aplica si el dict no trae "hostApi"; con
-        # cualquier valor != 0 (pyaudio siempre lo trae) el resultado es el
-        # mismo -> mutar -1 a +1/-2 es equivalente (no cazable por test).
-        if int(info.get("hostApi", -1)) == 0:  # MME  # pragma: no mutate
+        if int(info.get("hostApi", _HOST_API_NO_MME)) == 0:  # MME
             return i
     return candidatos[0][0]
 
