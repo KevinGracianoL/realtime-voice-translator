@@ -896,6 +896,57 @@ def test_buscar_device_encuentra_por_nombre_y_canales() -> None:
     assert _buscar_device(pa, "No existe", "maxOutputChannels", 2) is None
 
 
+def test_buscar_device_prefiere_mme() -> None:
+    """Entre duplicados del mismo device (WASAPI a 48000 y MME a 44100) gana
+    el MME: el resampler WASAPI a 48000 de VB-Audio inserta saltos de fase
+    (audio con clics que destruye la transcripcion). Y el filtro acepta
+    devices con MAS canales que el pedido (MME expone 16, no 2)."""
+    from traductor.flujo.adaptadores import _buscar_device
+
+    class _PaDoble:
+        _devices = [
+            {  # WASAPI: 2 canales, primero en la lista
+                "name": "CABLE Output (VB-Audio Virtual Cable)",
+                "maxInputChannels": 2,
+                "maxOutputChannels": 0,
+                "hostApi": 2,
+            },
+            {  # MME: 16 canales, despues
+                "name": "CABLE Output (VB-Audio Virtual Cable)",
+                "maxInputChannels": 16,
+                "maxOutputChannels": 0,
+                "hostApi": 0,
+            },
+        ]
+
+        def get_device_count(self) -> int:
+            return len(self._devices)
+
+        def get_device_info_by_index(self, i: int) -> dict[str, object]:
+            return self._devices[i]
+
+    assert _buscar_device(_PaDoble(), "CABLE Output", "maxInputChannels", 2) == 1
+
+    class _PaSinMme:
+        _devices = [
+            {
+                "name": "CABLE Output (VB-Audio Virtual Cable)",
+                "maxInputChannels": 2,
+                "maxOutputChannels": 0,
+                "hostApi": 2,
+            },
+        ]
+
+        def get_device_count(self) -> int:
+            return len(self._devices)
+
+        def get_device_info_by_index(self, i: int) -> dict[str, object]:
+            return self._devices[i]
+
+    # sin MME disponible: cae al primer candidato (comportamiento anterior)
+    assert _buscar_device(_PaSinMme(), "CABLE Output", "maxInputChannels", 2) == 0
+
+
 def test_buscar_device_ignora_capitalizacion() -> None:
     """El nombre del device se compara case-insensitive: el driver reporta
     'Voicemeeter Input' (m minúscula) mientras el fabricante/README escriben
