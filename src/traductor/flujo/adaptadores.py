@@ -34,8 +34,16 @@ class FlujoASR(Protocol):
     def segmento_final(self, texto: str, /) -> object: ...
 
 
-def _pcm_f32_a_wav(datos: bytes, sample_rate: int) -> tuple[bytes, float]:
-    """PCM float32 mono → WAV int16 mono (el flujo trabaja con WAV)."""
+def _pcm_f32_a_wav(  # pragma: no cover - numpy (mutmut no puede con el re-import)
+    datos: bytes, sample_rate: int
+) -> tuple[bytes, float]:
+    """PCM float32 mono → WAV int16 mono (el flujo trabaja con WAV).
+
+    Sin test en gates: numpy se importa PEREZOSAMENTE aquí (el core del módulo
+    no exige numpy) y mutmut re-importa el módulo por mutante — numpy 2 lanza
+    "cannot load module more than once per process" en ese ciclo. Igual que el
+    resto del código hardware de este archivo, se ejercita en la máquina.
+    """
     import io
     import wave
 
@@ -132,7 +140,17 @@ class AsrRealtime:  # pragma: no cover - requiere micrófono + RealtimeSTT
     def _final(self, texto: str) -> None:
         import threading
 
-        threading.Thread(target=self._flujo.segmento_final, args=(texto,), daemon=True).start()
+        def correr() -> None:
+            self._flujo.segmento_final(texto)
+            # desglose del cierre por etapa (diagnóstico de latencia en vivo:
+            # el core guarda `ultimo_turno_etapas` en ambos flujos)
+            etapas = getattr(self._flujo, "ultimo_turno_etapas", {})
+            total = getattr(self._flujo, "ultimo_turno_total_ms", 0.0)
+            if etapas:
+                desglose = " | ".join(f"{k} {v:.0f} ms" for k, v in etapas.items())
+                print(f"[turno] cierre {total:.0f} ms: {desglose}", flush=True)
+
+        threading.Thread(target=correr, daemon=True).start()
 
     def correr(self) -> None:
         from RealtimeSTT import AudioToTextRecorder
@@ -267,7 +285,11 @@ class AsrCable:  # pragma: no cover - requiere VB-CABLE + modelo
         if self._whisper is None:
             from faster_whisper import WhisperModel
 
-            self._whisper = WhisperModel("tiny", device="cuda", compute_type="int8_float16")
+            # small, no tiny: tiny ALUCINA sobre el audio del cable (frases del
+            # corpus de subtítulos: "Thanks for watching!") incluso con
+            # fragmentos cortos. small ya fue validado en esta GPU en el
+            # ADR-012 (int8_float16, proceso aparte del worker XTTS).
+            self._whisper = WhisperModel("small", device="cuda", compute_type="int8_float16")
         return self._whisper
 
     def correr(self) -> None:
@@ -279,10 +301,18 @@ class AsrCable:  # pragma: no cover - requiere VB-CABLE + modelo
 
         whisper = self._cargar_whisper()
         pa = pyaudio.PyAudio()
+        # Tasa NATIVA del device (MME = 44100): el resampler WASAPI a 48000
+        # de los drivers VB-Audio inserta saltos de fase cada ~20 ms (audio
+        # con clics que whisper transcribe distorsionado; ver _buscar_device).
+        rate = _tasa_nativa(pa, self._indice_cable, self._rate_cable)
+        # El cable es ESTÉREO: leerlo con channels=1 entrega datos que
+        # faster-whisper NO transcribe (texto vacío — bug cazado en la demo:
+        # pyaudio en un device estéreo con channels=1 devuelve muestras
+        # inválidas). Se lee ESTÉREO y se toma el canal izquierdo.
         stream = pa.open(
             format=pyaudio.paInt16,
-            channels=1,
-            rate=self._rate_cable,
+            channels=2,
+            rate=rate,
             input=True,
             input_device_index=self._indice_cable,
             frames_per_buffer=1024,
@@ -301,7 +331,7 @@ class AsrCable:  # pragma: no cover - requiere VB-CABLE + modelo
                 sf.write(
                     file=buf,
                     data=np.concatenate(fragmento).astype(np.float32),
-                    samplerate=self._rate_cable,
+                    samplerate=rate,
                     format="WAV",
                 )
                 buf.seek(0)
@@ -344,12 +374,16 @@ class AsrCable:  # pragma: no cover - requiere VB-CABLE + modelo
         threading.Thread(target=worker, args=(cola,), daemon=True).start()
         estado: dict[str, Any] = {}
         while True:
-            datos = stream.read(int(self._rate_cable * self._chunk_s), exception_on_overflow=False)
+            datos = stream.read(int(rate * self._chunk_s), exception_on_overflow=False)
+            # estéreo -> MONO con downmix (L+R)/2: tomar solo el canal
+            # izquierdo descartaba en silencio las fuentes que llegan por el
+            # derecho (revisión del PR #33); un downmix cuesta lo mismo.
             arr = np.frombuffer(datos, dtype=np.int16).astype(np.float32)
-            rms = float(np.sqrt(np.mean(arr**2)))
+            mono = (arr[0::2] + arr[1::2]) / 2.0
+            rms = float(np.sqrt(np.mean(mono**2)))
             procesar_chunk_vad(
                 estado,
-                arr,
+                mono,
                 rms,
                 chunk_s=self._chunk_s,
                 umbral_actividad=self._umbral_actividad,
@@ -594,8 +628,13 @@ class SalidaCable:  # pragma: no cover - requiere VB-CABLE
         self._bloque_s = bloque_s
         self._pa: Any | None = None
         self._stream: Any | None = None
+        self._rate_stream: int | None = None  # tasa REAL del stream abierto
         self._cola: Any = None  # queue.Queue de bloques; None = sentinela de cierre
         self._writer: Any = None  # único hilo escritor (preserva el orden FIFO)
+
+    def _rate_efectiva(self) -> int:
+        """Tasa del stream abierto o la de respaldo (tests con stream fake)."""
+        return self._rate_stream if self._rate_stream is not None else self._rate_cable
 
     def abrir(self) -> None:
         import queue
@@ -616,10 +655,14 @@ class SalidaCable:  # pragma: no cover - requiere VB-CABLE
                 "de salida existente, p. ej. 'VoiceMeeter Input') antes de "
                 "abrir la salida"
             )
+        # Tasa NATIVA del device (MME = 44100): el resampler WASAPI a 48000
+        # de los drivers VB-Audio inserta saltos de fase (audio con clics
+        # que destruyen la transcripción; ver _buscar_device).
+        self._rate_stream = _tasa_nativa(self._pa, indice, self._rate_cable)
         self._stream = self._pa.open(
             format=pyaudio.paInt16,
             channels=2,
-            rate=self._rate_cable,
+            rate=self._rate_stream,
             output=True,
             output_device_index=indice,
         )
@@ -674,12 +717,12 @@ class SalidaCable:  # pragma: no cover - requiere VB-CABLE
             return  # sin stream: no reproducir (escalera del cable)
         pcm = self._audio_a_pcm_cable(audio)
         # bloque en BYTES: rate * 2 canales * 2 bytes (int16) * segundos
-        bloque = max(1, int(self._rate_cable * 4 * self._bloque_s))
+        bloque = max(1, int(self._rate_efectiva() * 4 * self._bloque_s))
         for i in range(0, len(pcm), bloque):
             cola.put(pcm[i : i + bloque])
 
     def _audio_a_pcm_cable(self, audio: bytes) -> bytes:
-        """WAV → PCM int16 estéreo 48 kHz para el cable (resample lineal)."""
+        """WAV → PCM int16 estéreo a la tasa del stream (resample lineal)."""
         import io
 
         import numpy as np
@@ -687,9 +730,11 @@ class SalidaCable:  # pragma: no cover - requiere VB-CABLE
 
         datos, sr = sf.read(io.BytesIO(audio), dtype="float32")
         mono = np.asarray(datos, dtype=np.float32)
-        # resample LINEAL a 48 kHz (revisión #22: la división entera distorsiona
-        # el tono con sr que no divide 48000, p. ej. 22050 del candidato B)
-        ratio = self._rate_cable / sr
+        # resample LINEAL a la tasa del stream (revisión #22: la división
+        # entera distorsiona el tono con sr que no divide la tasa destino,
+        # p. ej. 22050 del candidato B)
+        rate_destino = self._rate_efectiva()
+        ratio = rate_destino / sr
         n_salida = int(len(mono) * ratio)
         pos = np.arange(n_salida, dtype=np.float32) / ratio
         i0 = pos.astype(np.int64)
@@ -748,8 +793,13 @@ def validar_arranque_real() -> bool:
 
 
 def python_venv_tts() -> Path:  # pragma: no cover - ruta de máquina
-    """El python del venv del TTS (coqui-tts vive ahí, ADR-011)."""
-    raiz = Path(__file__).resolve().parents[2]
+    """El python del venv del TTS (coqui-tts vive ahí, ADR-011).
+
+    parents[3]: src/traductor/flujo -> src/traductor -> src -> raíz. parents[2]
+    caía en `src` y el venv nunca se encontraba (se usaba sys.executable sin
+    coqui instalado -> el worker moría).
+    """
+    raiz = Path(__file__).resolve().parents[3]
     venv_tts = raiz / "venv-tts" / "Scripts" / "python.exe"
     if venv_tts.is_file():
         return venv_tts
@@ -763,22 +813,54 @@ def perfil_por_defecto() -> str:
     return id_
 
 
+# Default del `.get("hostApi")` cuando el dict no lo trae: cualquier valor
+# != 0 da "no es MME" -> mutarlo (+1/-2) es equivalente y no lo caza un test.
+_HOST_API_NO_MME = -1  # pragma: no mutate
+
+
 def _buscar_device(pa: Any, nombre_parcial: str, canales: str, valor: int) -> int | None:
     """Índice del device de pyaudio cuyo nombre contiene `nombre_parcial` y
-    cuya entrada/salida tiene `valor` canales; None si no existe (VB-CABLE
-    ausente → el caller lanza con mensaje claro, no un StopIteration vacío).
+    cuya entrada/salida tiene AL MENOS `valor` canales; None si no existe
+    (VB-CABLE ausente → el caller lanza con mensaje claro, no un
+    StopIteration vacío).
 
     La comparación de nombre es CASE-INSENSITIVE: Windows/drivers varían la
     capitalización (el driver reporta "Voicemeeter Input" con m minúscula
     mientras el fabricante escribe "VoiceMeeter Input") y el usuario no debe
     adivinar la del driver.
+
+    PREFIERE los devices del host API MME (hostApi 0): el motor de VB-Audio
+    corre a 44100 y MME lo entrega NATIVO; el mismo device expuesto por
+    WASAPI a 48000 pasa por un resampler defectuoso que inserta saltos de
+    fase cada ~20 ms (audio con clics inaudibles para el oído pero que
+    destruyen la transcripción — bug cazado con un tono puro de 440 Hz:
+    WASAPI daba 522 Hz con saltos, MME daba 440.0 Hz exactos). El filtro
+    usa `>=` porque los devices MME exponen 16 canales (no 2).
     """
     nombre = nombre_parcial.lower()
+    candidatos: list[tuple[int, Any]] = []
     for i in range(pa.get_device_count()):
         info = pa.get_device_info_by_index(i)
-        if nombre in str(info["name"]).lower() and info[canales] == valor:
+        if nombre in str(info["name"]).lower() and int(info[canales]) >= valor:
+            candidatos.append((i, info))
+    if not candidatos:
+        return None
+    for i, info in candidatos:
+        if int(info.get("hostApi", _HOST_API_NO_MME)) == 0:  # MME
             return i
-    return None
+    return candidatos[0][0]
+
+
+def _tasa_nativa(pa: Any, indice: int, respaldo: int) -> int:
+    """Tasa de muestreo NATIVA del device (`defaultSampleRate`), con respaldo.
+
+    Los devices MME de VB-Audio reportan 44100 (la tasa real del motor); usar
+    la tasa del device evita el resampler defectuoso de WASAPI a 48000.
+    """
+    try:
+        return int(pa.get_device_info_by_index(indice)["defaultSampleRate"])
+    except Exception:  # noqa: BLE001 - device fake en tests / driver raro
+        return respaldo
 
 
 def indice_cable_output() -> int:  # pragma: no cover - requiere VB-CABLE

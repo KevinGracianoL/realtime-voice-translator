@@ -23,7 +23,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
-addopts = "-q --cov=traductor.latencia --cov=traductor.audio.virtual --cov=traductor.traduccion --cov=traductor.ui --cov=traductor.tts --cov=traductor.asr --cov=traductor.hardware --cov=setup_dlls --cov-report=term-missing --cov-fail-under=90"
+addopts = "-q --cov=traductor.latencia --cov=traductor.audio.virtual --cov=traductor.traduccion --cov=traductor.ui --cov=traductor.tts --cov=traductor.asr --cov=traductor.flujo --cov=traductor.hardware --cov=setup_dlls --cov-report=term-missing --cov-fail-under=90"
 
 [project]
 name = "traductor-voz-entrevistas"

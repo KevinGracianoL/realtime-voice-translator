@@ -224,18 +224,19 @@ def _detectar_cable() -> str | None:
 
 
 def _dispositivo_cable(pa: Any, lado: str) -> int:
-    """Índice del CABLE {lado} de 2 canales (el estándar); fallback al primero."""
-    for i in range(pa.get_device_count()):
-        info = pa.get_device_info_by_index(i)
-        nombre = str(info["name"] or "")
-        if f"CABLE {lado}" in nombre and info["maxOutputChannels"] == 2:
-            return i
-    for i in range(pa.get_device_count()):
-        info = pa.get_device_info_by_index(i)
-        nombre = str(info["name"] or "")
-        if f"CABLE {lado}" in nombre:
-            return i
-    raise RuntimeError(f"dispositivo CABLE {lado} no encontrado")
+    """Índice del CABLE {lado} con el criterio del flujo real.
+
+    Usa `_buscar_device` (prefiere MME + canales >=): el duplicado WASAPI a
+    48000 pasa por el resampler defectuoso que pela el audio (hallazgo del PR
+    #33); medir los gates por ese camino mediria un audio distinto al real.
+    """
+    from traductor.flujo.adaptadores import _buscar_device
+
+    canales = "maxOutputChannels" if lado == "Input" else "maxInputChannels"
+    indice = _buscar_device(pa, f"CABLE {lado}", canales, 2)
+    if indice is None:
+        raise RuntimeError(f"dispositivo CABLE {lado} no encontrado")
+    return indice
 
 
 def _mono24k_a_cable48k(pcm16_mono: bytes) -> bytes:

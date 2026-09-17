@@ -896,6 +896,57 @@ def test_buscar_device_encuentra_por_nombre_y_canales() -> None:
     assert _buscar_device(pa, "No existe", "maxOutputChannels", 2) is None
 
 
+def test_buscar_device_prefiere_mme() -> None:
+    """Entre duplicados del mismo device (WASAPI a 48000 y MME a 44100) gana
+    el MME: el resampler WASAPI a 48000 de VB-Audio inserta saltos de fase
+    (audio con clics que destruye la transcripcion). Y el filtro acepta
+    devices con MAS canales que el pedido (MME expone 16, no 2)."""
+    from traductor.flujo.adaptadores import _buscar_device
+
+    class _PaDoble:
+        _devices = [
+            {  # WASAPI: 2 canales, primero en la lista
+                "name": "CABLE Output (VB-Audio Virtual Cable)",
+                "maxInputChannels": 2,
+                "maxOutputChannels": 0,
+                "hostApi": 2,
+            },
+            {  # MME: 16 canales, despues
+                "name": "CABLE Output (VB-Audio Virtual Cable)",
+                "maxInputChannels": 16,
+                "maxOutputChannels": 0,
+                "hostApi": 0,
+            },
+        ]
+
+        def get_device_count(self) -> int:
+            return len(self._devices)
+
+        def get_device_info_by_index(self, i: int) -> dict[str, object]:
+            return self._devices[i]
+
+    assert _buscar_device(_PaDoble(), "CABLE Output", "maxInputChannels", 2) == 1
+
+    class _PaSinMme:
+        _devices = [
+            {
+                "name": "CABLE Output (VB-Audio Virtual Cable)",
+                "maxInputChannels": 2,
+                "maxOutputChannels": 0,
+                "hostApi": 2,
+            },
+        ]
+
+        def get_device_count(self) -> int:
+            return len(self._devices)
+
+        def get_device_info_by_index(self, i: int) -> dict[str, object]:
+            return self._devices[i]
+
+    # sin MME disponible: cae al primer candidato (comportamiento anterior)
+    assert _buscar_device(_PaSinMme(), "CABLE Output", "maxInputChannels", 2) == 0
+
+
 def test_buscar_device_ignora_capitalizacion() -> None:
     """El nombre del device se compara case-insensitive: el driver reporta
     'Voicemeeter Input' (m minúscula) mientras el fabricante/README escriben
@@ -1145,3 +1196,175 @@ def test_asrrealtime_init_defaults() -> None:
     assert asr._sample_rate == 16000
     assert asr._etiqueta == "Flujo es"
     assert asr._post_speech_silence_duration == 1.5
+
+
+def test_salida_cable_abrir_usa_tasa_nativa(monkeypatch: pytest.MonkeyPatch) -> None:
+    """La tasa del stream es la NATIVA del device (44100 en MME), no el 48000
+    del constructor: el resampler WASAPI a 48000 pela el audio (PR #33).
+    Verifica tambien que el bloque de reproduccion sale de la tasa real:
+    44100 * 4 bytes * 0.2 s = 35280 bytes."""
+    import sys
+    import time
+    import types
+
+    import traductor.flujo.adaptadores as mod
+
+    abierto: list[dict[str, object]] = []
+    escritos: list[bytes] = []
+
+    class _StreamFake:
+        def write(self, bloque: bytes) -> None:
+            escritos.append(bloque)
+
+    class _PaFake:
+        def open(self, **kwargs: object) -> object:
+            abierto.append(kwargs)
+            return _StreamFake()
+
+        def get_device_info_by_index(self, i: int) -> dict[str, object]:
+            assert i == 2  # el indice que devolvio _buscar_device (caza None)
+            return {"defaultSampleRate": 44100.0, "hostApi": 0}
+
+        def terminate(self) -> None:
+            pass
+
+    monkeypatch.setitem(
+        sys.modules, "pyaudio", types.SimpleNamespace(PyAudio=lambda: _PaFake(), paInt16=16)
+    )
+    monkeypatch.setattr(mod, "_buscar_device", lambda *_a, **_k: 2)
+    monkeypatch.delenv("TRADUCTOR_DEVICE_OUTGOING", raising=False)
+    cable = mod.SalidaCable(bloque_s=0.2)
+    cable.abrir()
+    assert abierto[0]["rate"] == 44100
+    assert cable._rate_efectiva() == 44100
+    cable._audio_a_pcm_cable = lambda audio: bytes(100000)  # type: ignore[method-assign]
+    cable.reproducir(b"wav", 1.0, "x")
+    limite = time.time() + 1.0
+    while len(escritos) < 3 and time.time() < limite:
+        time.sleep(0.005)
+    assert [len(b) for b in escritos] == [35280, 35280, 29440]
+
+
+def test_perfil_por_defecto_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    from traductor.flujo.adaptadores import perfil_por_defecto
+
+    monkeypatch.delenv("TRADUCTOR_PERFIL_ID", raising=False)
+    assert perfil_por_defecto() == "kevin"
+    monkeypatch.setenv("TRADUCTOR_PERFIL_ID", "aldo")
+    assert perfil_por_defecto() == "aldo"
+
+
+def test_validar_arranque_real_ok_y_bloqueado(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cubre el happy path y el bloqueo de la validacion offline (ADR-014/015).
+
+    El fake de `validar_arranque` EJERCITA el traducible con un texto: asi el
+    lambda real de la funcion corre con sus argumentos exactos (es->en) y sus
+    mutantes no sobreviven.
+    """
+    from types import SimpleNamespace
+
+    import traductor.flujo.adaptadores as mod
+    import traductor.flujo.outgoing as outgoing
+    import traductor.traduccion.argos as argos
+
+    llamadas: list[tuple[str, str, str]] = []
+
+    def traducir_fake(texto: str, origen: str, destino: str) -> str:
+        llamadas.append((texto, origen, destino))
+        return "ok"
+
+    def validar_fake(traducible: Any) -> Any:
+        traducible("hello")  # ejercita el lambda real de validar_arranque_real
+        return SimpleNamespace(disponible=True, detalle="")
+
+    monkeypatch.setattr(argos, "traducir", traducir_fake)
+    monkeypatch.setattr(outgoing, "validar_arranque", validar_fake)
+    assert mod.validar_arranque_real() is True
+    assert llamadas == [("hello", "es", "en")]
+
+    monkeypatch.setattr(
+        outgoing,
+        "validar_arranque",
+        lambda _t: SimpleNamespace(disponible=False, detalle="sin mwt"),
+    )
+    assert mod.validar_arranque_real() is False
+
+
+def test_validar_arranque_real_imprime_su_estado(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """La salida distingue OK de BLOQUEADO (caza los mutantes de los prints,
+    que no cambian el valor de retorno)."""
+    from types import SimpleNamespace
+
+    import traductor.flujo.adaptadores as mod
+    import traductor.flujo.outgoing as outgoing
+
+    monkeypatch.setattr(
+        outgoing,
+        "validar_arranque",
+        lambda _t: SimpleNamespace(disponible=False, detalle="sin mwt"),
+    )
+    assert mod.validar_arranque_real() is False
+    bloqueado = capsys.readouterr().out
+    assert "BLOQUEADO" in bloqueado
+    assert "sin mwt" in bloqueado
+
+    monkeypatch.setattr(
+        outgoing,
+        "validar_arranque",
+        lambda _t: SimpleNamespace(disponible=True, detalle=""),
+    )
+    assert mod.validar_arranque_real() is True
+    # igualdad EXACTA: caza los mutantes que envuelven el string con "XX"
+    assert capsys.readouterr().out.strip() == (
+        "Arranque offline de la traducción: OK (mwt precargado)"
+    )
+
+
+def test_stream_cancelado_antes_del_primer_chunk_no_enruta() -> None:
+    """Si el turno se supera ANTES de que salga el primer chunk del stream,
+    nada se enruta: la escalera NO se prueba (turno muerto) y el flujo
+    devuelve False. Cubre el corte de cancelacion de _enrutar_stream y el
+    corte de escalera en _procesar."""
+    teleprompter = _TeleprompterFake()
+    salida = _SalidaFake()
+    flujo = FlujoOutgoing(
+        traducir=lambda es: f"EN({es})",
+        tts_primario=_TtsStreamFake(),
+        tts_fallback=None,
+        teleprompter=teleprompter,
+        salida_audio=salida,
+    )
+
+    def sintetizar_cancelando(texto_en: str) -> Any | None:
+        def generador() -> Any:
+            flujo.cancelar_turno_activo()  # el turno muere antes del primer chunk
+            yield (b"wav-1", 1.0, "clonado")
+
+        return generador()
+
+    tts = flujo.tts_primario
+    assert isinstance(tts, EtapaTtsStream)
+    tts.sintetizar_stream = sintetizar_cancelando  # type: ignore[method-assign]
+    assert flujo.segmento_final("texto") is None  # cancelado: nada se enruta
+    assert salida.reproducidos == []
+
+
+def test_tts_no_stream_con_artefactos_no_reproduce_y_escala() -> None:
+    """Camino NO-stream con audio sospechoso: se marca degradado, NO se
+    reproduce jamas y se cae a subtitulos (cubre el continue de _procesar)."""
+    teleprompter = _TeleprompterFake()
+    salida = _SalidaFake()
+    flujo = FlujoOutgoing(
+        traducir=lambda es: "target text",
+        tts_primario=_TtsFake(ok=True),
+        tts_fallback=_TtsFake(ok=True),
+        teleprompter=teleprompter,
+        salida_audio=salida,
+        verificar_artefactos=lambda _audio: "target text y mucha basura extra",
+        max_sobrantes=0,
+    )
+    assert flujo.segmento_final("hola") == NIVEL_SUBTITULOS  # solo subtitulos
+    assert salida.reproducidos == []
+    assert flujo.ultimo_turno_degradado is True

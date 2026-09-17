@@ -216,12 +216,17 @@ Los dispositivos son configurables por env (defaults retrocompatibles con un sol
 $env:TRADUCTOR_DEVICE_INCOMING = "CABLE Output"       # default
 # A dónde ESCRIBE el TTS del outgoing (mic virtual de Meet/OBS):
 $env:TRADUCTOR_DEVICE_OUTGOING = "VoiceMeeter Input"  # default: "CABLE Input"
+# Micrófono del outgoing (índice de pyaudio; la demo usa el de la laptop vía MME):
+$env:TRADUCTOR_MIC_INDEX = "1"
 ```
 
 **Correr los flujos (demo del video):**
 
 ```powershell
 $env:PYTHONPATH = "src"
+# 0. El WAV del entrevistador va gitignored (los *.wav nunca suben al repo):
+#    regéneralo con el python del venv-tts (coqui):
+venv-tts\Scripts\python.exe scripts/audio/generar_entrevistador.py
 # 1. Teleprompter (subtítulos ES+EN, con la fuente de cada voz): http://localhost:8000
 python -m uvicorn traductor.ui.app:app --host 127.0.0.1 --port 8000
 # 2. Incoming: entrevistador → subtítulos en español (lee de TRADUCTOR_DEVICE_INCOMING)
@@ -234,8 +239,19 @@ python scripts/reproducir_entrevistador.py --veces 1 --delay 2
 
 Ajustes de turno por env (sin tocar código): `TRADUCTOR_SILENCIO_TURNO_S` (1.5 s de
 silencio cierra tu turno → el párrafo completo es UN turno, sin entrecortes),
-`TRADUCTOR_FRAGMENTO_MAX_S` (4 s máx. por fragmento del incoming → whisper `tiny` no
-alucina) y `TRADUCTOR_UMBRAL_RMS` (300, actividad de voz del cable).
+`TRADUCTOR_FRAGMENTO_MAX_S` (4 s máx. por fragmento del incoming → whisper `small`
+no alucina; el cambio de `tiny` a `small` costó ~550-860 ms medidos por fragmento
+de 3 s, y cortó las alucinaciones del corpus) y `TRADUCTOR_UMBRAL_RMS` (300,
+actividad de voz del cable).
+
+**Nota técnica — por qué MME y no WASAPI (bug cazado con un tono puro de 440 Hz):**
+el motor de VB-Audio corre internamente a **44100**. El mismo device expuesto por
+WASAPI a 48000 pasa por un resampler que en Windows inserta **saltos de fase cada
+~20 ms**: audio con clics inaudibles al oído pero que rompen la transcripción
+(whisper oía "hard bug you solved" como palabras distintas). El código **prefiere
+los devices MME** (tasa nativa 44100) automáticamente: el tono de prueba sale
+**440.0 Hz exactos por MME** y 522 Hz con saltos por WASAPI. Si eliges devices a
+mano, usa los MME.
 
 ---
 
@@ -265,7 +281,7 @@ alucina) y `TRADUCTOR_UMBRAL_RMS` (300, actividad de voz del cable).
 ├── scripts/                    # hardware, traducción, harness de gates
 ├── setup_dlls.py               # CUDA 12/13 coexistiendo (Windows, locks AV)
 ├── docs/                       # 16 ADRs con evidencia medida
-├── tests/                      # 380 tests, 100 % cov, mutantes en CI
+├── tests/                      # 382 tests, 100 % cov, mutantes en CI
 └── .github/workflows/ci.yml    # 5 gates que fallan el PR si algo se rompe
 ```
 
