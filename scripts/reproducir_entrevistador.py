@@ -23,11 +23,19 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
     parser = argparse.ArgumentParser()
     parser.add_argument("--veces", type=int, default=3, help="0 = bucle infinito")
     parser.add_argument(
+        "--delay",
+        type=float,
+        default=0.0,
+        help="segundos de espera antes del primer turno (para abrir OBS y "
+        "empezar a grabar antes de que el entrevistador hable)",
+    )
+    parser.add_argument(
         "--pausa",
         type=float,
-        default=2.0,
-        help="silencio entre turnos en segundos (el VAD de Silero une turnos "
-        "con pausas < ~1 s en una sola locución y nunca cierra el turno)",
+        default=8.0,
+        help="silencio entre turnos en segundos (el WAV tiene ~20 s de "
+        "preguntas: 8 s de pausa hacen un ciclo de ~28 s, natural para la "
+        "demo; pausas < ~1 s hacen que el VAD una los turnos)",
     )
     args = parser.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
@@ -51,6 +59,9 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
     except StopIteration as exc:
         raise RuntimeError("VB-CABLE no disponible (CABLE Input)") from exc
     rate_cable = int(pa.get_device_info_by_index(indice)["defaultSampleRate"])
+    # resample LINEAL a la tasa del cable + ESTÉREO (mismo patrón que
+    # SalidaCable): escribir mono a un device estéreo deforma el audio
+    # (sonaba acelerado/agudo — bug cazado en la demo del PR #26)
     ratio = rate_cable / sr
     n_salida = int(len(muestras) * ratio)
     pos = np.arange(n_salida, dtype=np.float32) / ratio
@@ -58,16 +69,20 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
     i1 = np.minimum(i0 + 1, len(muestras) - 1)
     alpha = (pos - i0).astype(np.float32)
     res = muestras[i0] * (1 - alpha) + muestras[i1] * alpha
-    pcm = (np.clip(res, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+    stereo = np.repeat(res, 2)
+    pcm = (np.clip(stereo, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
 
     stream = pa.open(
         format=pyaudio.paInt16,
-        channels=1,
+        channels=2,
         rate=rate_cable,
         output=True,
         output_device_index=indice,
     )
     print(f"Entrevistador en CABLE Input ({wav.name}, {duracion_s:.1f}s) x{args.veces or '∞'}")
+    if args.delay > 0:
+        print(f"  esperando {args.delay:.0f}s antes del primer turno...", flush=True)
+        time.sleep(args.delay)
     n = 0
     try:
         while args.veces == 0 or n < args.veces:

@@ -132,7 +132,17 @@ class AsrRealtime:  # pragma: no cover - requiere micrófono + RealtimeSTT
     def _final(self, texto: str) -> None:
         import threading
 
-        threading.Thread(target=self._flujo.segmento_final, args=(texto,), daemon=True).start()
+        def correr() -> None:
+            self._flujo.segmento_final(texto)
+            # desglose del cierre por etapa (diagnóstico de latencia en vivo:
+            # el core guarda `ultimo_turno_etapas` en ambos flujos)
+            etapas = getattr(self._flujo, "ultimo_turno_etapas", {})
+            total = getattr(self._flujo, "ultimo_turno_total_ms", 0.0)
+            if etapas:
+                desglose = " | ".join(f"{k} {v:.0f} ms" for k, v in etapas.items())
+                print(f"[turno] cierre {total:.0f} ms: {desglose}", flush=True)
+
+        threading.Thread(target=correr, daemon=True).start()
 
     def correr(self) -> None:
         from RealtimeSTT import AudioToTextRecorder
@@ -748,8 +758,13 @@ def validar_arranque_real() -> bool:
 
 
 def python_venv_tts() -> Path:  # pragma: no cover - ruta de máquina
-    """El python del venv del TTS (coqui-tts vive ahí, ADR-011)."""
-    raiz = Path(__file__).resolve().parents[2]
+    """El python del venv del TTS (coqui-tts vive ahí, ADR-011).
+
+    parents[3]: src/traductor/flujo -> src/traductor -> src -> raíz. parents[2]
+    caía en `src` y el venv nunca se encontraba (se usaba sys.executable sin
+    coqui instalado -> el worker moría).
+    """
+    raiz = Path(__file__).resolve().parents[3]
     venv_tts = raiz / "venv-tts" / "Scripts" / "python.exe"
     if venv_tts.is_file():
         return venv_tts

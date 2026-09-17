@@ -72,6 +72,12 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
             # (evita que cada frase cancele el TTS de la anterior). Ajustable
             # por env sin tocar código.
             post_speech_silence_duration=float(os.environ.get("TRADUCTOR_SILENCIO_TURNO_S", "1.5")),
+            # micrófono por env (la demo usa el headset: TRADUCTOR_MIC_INDEX=1)
+            input_device_index=(
+                int(os.environ["TRADUCTOR_MIC_INDEX"])
+                if os.environ.get("TRADUCTOR_MIC_INDEX")
+                else None
+            ),
         ).correr()
     except KeyboardInterrupt:
         print("\nFlujo detenido.")
