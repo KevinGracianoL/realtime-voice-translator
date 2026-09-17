@@ -1221,7 +1221,8 @@ def test_salida_cable_abrir_usa_tasa_nativa(monkeypatch: pytest.MonkeyPatch) -> 
             abierto.append(kwargs)
             return _StreamFake()
 
-        def get_device_info_by_index(self, _i: int) -> dict[str, object]:
+        def get_device_info_by_index(self, i: int) -> dict[str, object]:
+            assert i == 2  # el indice que devolvio _buscar_device (caza None)
             return {"defaultSampleRate": 44100.0, "hostApi": 0}
 
         def terminate(self) -> None:
@@ -1254,20 +1255,32 @@ def test_perfil_por_defecto_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_validar_arranque_real_ok_y_bloqueado(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Cubre el happy path y el bloqueo de la validacion offline (ADR-014/015)."""
+    """Cubre el happy path y el bloqueo de la validacion offline (ADR-014/015).
+
+    El fake de `validar_arranque` EJERCITA el traducible con un texto: asi el
+    lambda real de la funcion corre con sus argumentos exactos (es->en) y sus
+    mutantes no sobreviven.
+    """
     from types import SimpleNamespace
 
     import traductor.flujo.adaptadores as mod
     import traductor.flujo.outgoing as outgoing
     import traductor.traduccion.argos as argos
 
-    monkeypatch.setattr(argos, "traducir", lambda _t, _o, _d: "ok")
-    monkeypatch.setattr(
-        outgoing,
-        "validar_arranque",
-        lambda _t: SimpleNamespace(disponible=True, detalle=""),
-    )
+    llamadas: list[tuple[str, str, str]] = []
+
+    def traducir_fake(texto: str, origen: str, destino: str) -> str:
+        llamadas.append((texto, origen, destino))
+        return "ok"
+
+    def validar_fake(traducible: Any) -> Any:
+        traducible("hello")  # ejercita el lambda real de validar_arranque_real
+        return SimpleNamespace(disponible=True, detalle="")
+
+    monkeypatch.setattr(argos, "traducir", traducir_fake)
+    monkeypatch.setattr(outgoing, "validar_arranque", validar_fake)
     assert mod.validar_arranque_real() is True
+    assert llamadas == [("hello", "es", "en")]
 
     monkeypatch.setattr(
         outgoing,
