@@ -45,11 +45,55 @@ def test_verificar_salud_no_carga_el_modelo() -> None:
     assert backend._tts is None
 
 
-def test_latentes_por_perfil_inicial_vacio() -> None:
-    """El cache de latentes arranca vacío (mutante `= None` lo caza: sin
-    dict, `_latentes` reventaría al asignar)."""
+def test_frases_parte_por_puntuacion_fuerte() -> None:
+    """El batch por frase parte el texto en unidades cortas conservando la
+    puntuacion (".", "!", "?", ":", ";")."""
+    from traductor.tts.backend_xtts import _frases
+
+    assert _frases("Thank you. Recently I solved it: in production. Today!") == [
+        "Thank you.",
+        "Recently I solved it:",
+        "in production.",
+        "Today!",
+    ]
+    # sin puntuacion: una sola frase (no se pierde nada)
+    assert _frases("hola mundo") == ["hola mundo"]
+    # vacio / solo espacios
+    assert _frases("") == []
+    assert _frases("   ") == []
+    # la cola sin puntuar se conserva
+    assert _frases("Uno. Dos sin punto") == ["Uno.", "Dos sin punto"]
+
+
+def test_sintetizar_stream_por_frase_batch() -> None:
+    """`sintetizar_stream` emite UN AudioResult por frase, con batch `tts.tts`
+    (no el inference_stream lento): RTF medido 1.8 vs 0.73 en la 1650 Ti."""
+    from traductor.tts.backend_xtts import _frases
+
     backend = BackendXtts()
-    assert backend._latentes_por_perfil == {}
+    llamadas: list[tuple[str, list[str], str]] = []
+
+    class _TtsFake:
+        def tts(
+            self,
+            texto: str,
+            speaker_wav: list[str],
+            language: str,
+            split_sentences: bool = True,
+        ) -> list[float]:
+            llamadas.append((texto, speaker_wav, language))
+            assert split_sentences is False  # la frase ya es una unidad
+            return [0.1] * 240  # 0.01 s de audio por frase
+
+    backend._tts = _TtsFake()
+    salidas = list(backend.sintetizar_stream("Uno. Dos!", PERFIL))
+    assert len(salidas) == len(_frases("Uno. Dos!"))
+    assert [c[0] for c in llamadas] == ["Uno.", "Dos!"]
+    assert llamadas[0][1] == list(PERFIL.muestras)
+    assert llamadas[0][2] == "en"
+    for salida in salidas:
+        assert salida.formato == "pcm_f32le"
+        assert salida.duracion_s == pytest.approx(240 / 24000)
 
 
 def test_verificar_salud_con_modelo_cargado() -> None:

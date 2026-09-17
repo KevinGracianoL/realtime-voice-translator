@@ -46,13 +46,32 @@ def _chunk_a_muestras(chunk: Any) -> list[float]:
     return [float(v) for v in plano]
 
 
+def _frases(texto: str) -> list[str]:
+    """Parte `texto` en frases por puntuación fuerte, conservándola (pura).
+
+    El batch por frase necesita unidades cortas: la primera debe estar lista
+    rápido (cierre del turno) y cada una debe generarse más rápido de lo que
+    suena (RTF < 1 sostenido). Puntúa también `:` y `;` porque el habla hace
+    pausa ahí y unidades más cortas sostienen mejor el tiempo real.
+    """
+    frases: list[str] = []
+    actual: list[str] = []
+    for palabra in texto.split():
+        actual.append(palabra)
+        if palabra.endswith((".", "!", "?", "…", ":", ";")):
+            frases.append(" ".join(actual))
+            actual = []
+    if actual:
+        frases.append(" ".join(actual))
+    return frases
+
+
 class BackendXtts:
     """TTSBackend sobre XTTS-v2. `idioma_salida`: "en" para ES→EN (ADR-015)."""
 
     def __init__(self, idioma_salida: str = "en") -> None:
         self._idioma_salida = idioma_salida
         self._tts: Any | None = None
-        self._latentes_por_perfil: dict[str, tuple[Any, Any]] = {}
 
     def _cargar(self) -> Any:  # pragma: no cover - requiere coqui_tts + GPU
         """Carga el modelo una sola vez (lazy). Raises: RuntimeError."""
@@ -85,34 +104,27 @@ class BackendXtts:
         )
         return pcm_a_audio_result(wav, SR_XTTS)
 
-    def sintetizar_stream(  # pragma: no cover - requiere coqui_tts + GPU
-        self, texto: str, perfil: VoiceProfile
-    ) -> Iterator[AudioResult]:
-        """Sintetiza en chunks (`inference_stream`): el primero llega en ~0.7 s.
+    def sintetizar_stream(self, texto: str, perfil: VoiceProfile) -> Iterator[AudioResult]:
+        """Sintetiza POR FRASE en batch: cada frase completa es un chunk.
 
-        Las latentes de condicionamiento se calculan UNA vez por perfil y se
-        cachean (ADR-011: 756 ms que no entran al presupuesto por turno); el
-        generador se cierra al terminar (dejarlo abandonado mantiene estado
-        de streaming en la GPU y contamina mediciones, ver harness).
+        El camino anterior (`inference_stream`) generaba en incrementos
+        pequeños y midió **RTF ~1.8 en la GTX 1650 Ti** (más lento que tiempo
+        real: el stream de reproducción se quedaba sin datos y la voz salía
+        "una frase bien, después palabra por palabra con pausas"). El batch
+        por frase de `tts.tts()` mide **RTF 0.73-0.76** (más rápido que tiempo
+        real) y una frase corta inicial ("Thank you.") devuelve el primer
+        chunk en <1 s: el pipeline de cola/writer del `SalidaCable` (ADR-019)
+        no cambia, solo el ritmo de producción.
         """
         tts = self._cargar()
-        gpt, spk = self._latentes(perfil)
-        generador = tts.synthesizer.tts_model.inference_stream(texto, self._idioma_salida, gpt, spk)
-        try:
-            for chunk in generador:
-                yield pcm_a_audio_result(_chunk_a_muestras(chunk), SR_XTTS)
-        finally:
-            generador.close()
-
-    def _latentes(self, perfil: VoiceProfile) -> tuple[Any, Any]:  # pragma: no cover
-        """Latentes del perfil, cacheadas (una vez por id de perfil)."""
-        if perfil.id not in self._latentes_por_perfil:
-            tts = self._cargar()
-            latentes = tts.synthesizer.tts_model.get_conditioning_latents(
-                audio_path=list(perfil.muestras)
+        for frase in _frases(texto):
+            wav = tts.tts(
+                frase,
+                speaker_wav=list(perfil.muestras),
+                language=self._idioma_salida,
+                split_sentences=False,
             )
-            self._latentes_por_perfil[perfil.id] = (latentes[0], latentes[1])
-        return self._latentes_por_perfil[perfil.id]
+            yield pcm_a_audio_result(_chunk_a_muestras(wav), SR_XTTS)
 
     def verificar_salud(self) -> Salud:
         """Estado SIN efectos secundarios: no carga el modelo (r1 PR #16).
