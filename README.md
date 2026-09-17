@@ -39,6 +39,8 @@ Después de **tres rondas de medición en hardware real** —y de que las dos pr
 
 **¿Por qué importa?** El techo de 1,5–2 s del ADR-003 **no se inventó ni se copió de un benchmark**: se midió la cadena completa *en esta GPU de 4 GB*, con el ASR co-residente y el micrófono virtual real. La historia completa de las dos métricas mal definidas que detecté yo mismo, corregí y convertí en reglas, vive en [ADR-014](docs/ADR-014-gates-aceptacion-tts.md) — cinco capas de evidencia, ninguna borrada.
 
+**Nota de streaming (medida en la misma GPU):** el `inference_stream` de XTTS rinde **RTF ≈ 1.8** en la GTX 1650 Ti —más lento que tiempo real—: el stream de reproducción se queda sin datos y la voz sale con pausas ("una frase bien, después palabra por palabra"). El backend ahora sintetiza **por frase en batch** (`tts()` completo, **RTF 0.73–0.76** medido) y emite cada frase como chunk al pipeline de cola/writer: la **voz clonada sale fluida** sin cambiar de motor (el aislamiento del ADR-011). En hardware sin Tensor Cores, el streaming continuo del motor queda fuera de presupuesto; el **batch por frase** es el camino declarado, y en GPUs con RTF < 1 sostenido el streaming en vivo queda disponible con el mismo contrato.
+
 ---
 
 ## 🎯 Qué resuelve
