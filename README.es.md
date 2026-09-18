@@ -15,7 +15,7 @@
 ![coverage 100%](https://img.shields.io/badge/coverage-100%25-brightgreen?style=flat-square)
 ![mutantes 0 supervivientes](https://img.shields.io/badge/mutantes-0%20supervivientes-brightgreen?style=flat-square)
 ![399 tests](https://img.shields.io/badge/tests-399-2A6DB5?style=flat-square)
-![16 ADRs](https://img.shields.io/badge/decisiones-16%20ADRs-2A6DB5?style=flat-square)
+![25 ADRs](https://img.shields.io/badge/decisiones-25%20ADRs-2A6DB5?style=flat-square)
 ![License MIT](https://img.shields.io/badge/license-MIT-yellow?style=flat-square)
 
 **Demo en vivo → [traductor-demo.kevingraciano.dev](https://traductor-demo.kevingraciano.dev)** · **Por [Kevin Graciano](https://github.com/KevinGracianoL)**
@@ -65,7 +65,7 @@ Este proyecto prioriza **texto verificable** sobre voz sintética indistinguible
 
 1. **Privacidad real** — el audio nunca sale de la máquina. Todo corre local (CPU + GPU propia), sin nube, sin APIs.
 2. **Cero magia** — cada etapa es una función pura y testeada: micrófono → VAD → ASR → traducción → teleprompter → voz.
-3. **Evidencia sobre opinión** — 16 ADRs, cada decisión con su porqué medido. El motor de voz se rechazó **dos veces** con números antes de aceptarse con números.
+3. **Evidencia sobre opinión** — 25 ADRs, cada decisión con su porqué medido. El motor de voz se rechazó **dos veces** con números antes de aceptarse con números.
 
 ---
 
@@ -312,7 +312,7 @@ mano, usa los MME.
 │       └── medidor.py          # reloj inyectable, p50/p95 honesto (n≥20)
 ├── scripts/                    # hardware, traducción, harness de gates
 ├── setup_dlls.py               # CUDA 12/13 coexistiendo (Windows, locks AV)
-├── docs/                       # 16 ADRs con evidencia medida + demo/ (video)
+├── docs/                       # 25 ADRs con evidencia medida + demo/ (video)
 ├── tests/                      # 399 tests, 100 % cov, mutantes en CI
 └── .github/workflows/ci.yml    # 5 gates que fallan el PR si algo se rompe
 ```
@@ -323,15 +323,15 @@ mano, usa los MME.
 
 | # | Decisión | Por qué |
 |---|---|---|
-| 001 | Cascada, no end-to-end | Texto verificable > latencia mínima |
-| 002 | Audio virtual a nivel SO | Funciona con cualquier Meet/Zoom sin API |
-| 003 | Techo 1,5–2 s | Recorta calidad, nunca latencia |
-| 004 | INT8, no FP16 | TU117 sin Tensor Cores, FP16 emulado |
-| 005 | Local, no remoto | AVX2+CUDA+0 ms gana a geografía |
-| 006 | Sobre RealtimeSTT | VAD/ASR commodity, nosotros orquestamos |
-| 007 | Teleprompter primero | Semanas vs meses, honestidad en entrevista |
-| 008 | Fallback automático | Una entrevista no es un log |
-| 009 | Dirección por fuente | Determinista, 0 ms, sin detector que falle en code-switching |
+| 001 | **Cascada, no end-to-end** | [ADR-001](docs/ADR-001-cascada-no-end-to-end.md): texto verificable > latencia mínima |
+| 002 | **Audio virtual a nivel SO** | [ADR-002](docs/ADR-002-audio-virtual-nivel-so.md): funciona con cualquier Meet/Zoom sin API |
+| 003 | **Techo 1,5–2 s** | [ADR-003](docs/ADR-003-techo-presupuesto-latencia.md): recorta calidad, nunca latencia; presupuesto TTFA derivado |
+| 004 | **INT8, no FP16** | [ADR-004](docs/ADR-004-int8-no-fp16.md): TU117 sin Tensor Cores, FP16 emulado |
+| 005 | **Local, no remoto** | [ADR-005](docs/ADR-005-local-no-remoto.md): AVX2+CUDA+0 ms gana a geografía |
+| 006 | **Sobre RealtimeSTT** | [ADR-006](docs/ADR-006-sobre-realtimestt.md): VAD/ASR commodity, nosotros orquestamos |
+| 007 | **Teleprompter primero** | [ADR-007](docs/ADR-007-teleprompter-primero.md): semanas vs meses, honestidad en entrevista |
+| 008 | **Fallback automático** | [ADR-008](docs/ADR-008-fallback-automatico.md): una entrevista no es un log |
+| 009 | **Dirección por fuente** | [ADR-009](docs/ADR-009-direccion-por-fuente.md): determinista, 0 ms, sin detector que falle en code-switching |
 | 010 | **Chatterbox rechazado como TTS** | [ADR-010](docs/ADR-010-chatterbox-rechazado.md): 17,4 s warm / 3,6 GB **medidos** en esta GPU, sin co-residencia con Whisper |
 | 011 | **Motor elegido: XTTS-v2** | [ADR-011](docs/ADR-011-contratos-neutrales-tts.md): aceptado por los gates medidos; CPML declarado (uso personal); Supertonic+OpenVoice como B (rechazado); Pocket descartado |
 | 012 | **Benchmark ASR bidireccional** | [ADR-012](docs/ADR-012-benchmark-asr.md): Moonshine Small CPU vs faster-whisper Small GPU; WER normalizado + p50/p95 |
@@ -339,6 +339,8 @@ mano, usa los MME.
 | 014 | **Gates de aceptación del motor** | [ADR-014](docs/ADR-014-gates-aceptacion-tts.md): **cinco capas de corrección de instrumento** + presupuesto TTFA derivado; pipeline end-to-end 1469.3 ms (peor caso) < 2000 ms |
 | 015 | **Arquitectura por flujos y escalera** | [ADR-015](docs/ADR-015-arquitectura-flujos-escalera.md): outgoing/incoming, colas de tamaño 1, validación de artefactos, 4 niveles |
 | 019 | **Gates de sesión y endurance** | [ADR-019](docs/ADR-019-endurance-sesion.md): 90 min continuos, sin OOM, memoria estable, artefactos, A/B firmado por el usuario — la aprobación final |
+
+> La numeración no es contigua: **016–018 quedaron como números de reserva nunca usados** (sin documento ni referencia en el historial del repo); los ADRs reales son **001–015 + 019**. Los documentos 001–009 se reconstruyeron el 2026-09-18 desde los commits, el código y los tests originales (la era inicial no escribió los archivos).
 
 ---
 
