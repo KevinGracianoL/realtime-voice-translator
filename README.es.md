@@ -15,7 +15,7 @@
 ![coverage 100%](https://img.shields.io/badge/coverage-100%25-brightgreen?style=flat-square)
 ![mutantes 0 supervivientes](https://img.shields.io/badge/mutantes-0%20supervivientes-brightgreen?style=flat-square)
 ![399 tests](https://img.shields.io/badge/tests-399-2A6DB5?style=flat-square)
-![25 ADRs](https://img.shields.io/badge/decisiones-25%20ADRs-2A6DB5?style=flat-square)
+![16 ADRs](https://img.shields.io/badge/decisiones-16%20ADRs-2A6DB5?style=flat-square)
 ![License MIT](https://img.shields.io/badge/license-MIT-yellow?style=flat-square)
 
 **Demo en vivo → [traductor-demo.kevingraciano.dev](https://traductor-demo.kevingraciano.dev)** · **Por [Kevin Graciano](https://github.com/KevinGracianoL)**
@@ -65,7 +65,7 @@ Este proyecto prioriza **texto verificable** sobre voz sintética indistinguible
 
 1. **Privacidad real** — el audio nunca sale de la máquina. Todo corre local (CPU + GPU propia), sin nube, sin APIs.
 2. **Cero magia** — cada etapa es una función pura y testeada: micrófono → VAD → ASR → traducción → teleprompter → voz.
-3. **Evidencia sobre opinión** — 25 ADRs, cada decisión con su porqué medido. El motor de voz se rechazó **dos veces** con números antes de aceptarse con números.
+3. **Evidencia sobre opinión** — 16 ADRs, cada decisión con su porqué medido. El motor de voz se rechazó **dos veces** con números antes de aceptarse con números.
 
 ---
 
@@ -312,7 +312,7 @@ mano, usa los MME.
 │       └── medidor.py          # reloj inyectable, p50/p95 honesto (n≥20)
 ├── scripts/                    # hardware, traducción, harness de gates
 ├── setup_dlls.py               # CUDA 12/13 coexistiendo (Windows, locks AV)
-├── docs/                       # 25 ADRs con evidencia medida + demo/ (video)
+├── docs/                       # 16 ADRs con evidencia medida + demo/ (video)
 ├── tests/                      # 399 tests, 100 % cov, mutantes en CI
 └── .github/workflows/ci.yml    # 5 gates que fallan el PR si algo se rompe
 ```

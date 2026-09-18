@@ -10,4 +10,4 @@
   - `docs/propuesta-paso5.md` es el plan del entregable (FastAPI + WebSocket, sin auth, sin TTS en browser); `src/traductor/ui/` lo implementa y `tests/test_ui.py` lo cubre.
   - El flujo degrada a «solo subtítulos» cuando el TTS falla (ADR-008): el teleprompter es el nivel 4 de la escalera.
   - El deploy Caddy (`deploy/README.md`) publica **solo el UI de demo**; el pipeline real corre local (ADR-005).
-- **Trazabilidad:** commits `af260eb` («propuesta paso 5 teleprompter para Hal»), `f0e7eb9` (implementación + tests), `4edac23` (merge del PR #8), `f34bcc2` (deploy demo). Código: `src/traductor/ui/app.py`, `templates/teleprompter.html`, `static/style.css`; `tests/test_ui.py` (7 tests).
+- **Trazabilidad:** commits `af260eb` («propuesta paso 5 teleprompter para Hal»), `f0e7eb9` (implementación + tests), `4edac23` (merge del PR #8), `f34bcc2`/`cc6278b` (deploy demo: rama y `main`). Código: `src/traductor/ui/app.py`, `templates/teleprompter.html`, `static/style.css`; `tests/test_ui.py` (7 tests).

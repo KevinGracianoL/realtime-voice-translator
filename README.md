@@ -15,7 +15,7 @@
 ![coverage 100%](https://img.shields.io/badge/coverage-100%25-brightgreen?style=flat-square)
 ![mutantes 0 supervivientes](https://img.shields.io/badge/mutantes-0%20supervivientes-brightgreen?style=flat-square)
 ![399 tests](https://img.shields.io/badge/tests-399-2A6DB5?style=flat-square)
-![25 ADRs](https://img.shields.io/badge/decisiones-25%20ADRs-2A6DB5?style=flat-square)
+![16 ADRs](https://img.shields.io/badge/decisiones-16%20ADRs-2A6DB5?style=flat-square)
 ![License MIT](https://img.shields.io/badge/license-MIT-yellow?style=flat-square)
 
 **Live demo → [traductor-demo.kevingraciano.dev](https://traductor-demo.kevingraciano.dev)** · **By [Kevin Graciano](https://github.com/KevinGracianoL)**
@@ -65,7 +65,7 @@ This project prioritizes **verifiable text** over indistinguishable synthetic vo
 
 1. **Real privacy** — audio never leaves the machine. Everything runs locally (own CPU + GPU), no cloud, no APIs.
 2. **Zero magic** — each stage is a pure, tested function: microphone → VAD → ASR → translation → teleprompter → voice.
-3. **Evidence over opinion** — 25 ADRs, each decision with its measured why. The voice engine was rejected **twice** with numbers before being accepted with numbers.
+3. **Evidence over opinion** — 16 ADRs, each decision with its measured why. The voice engine was rejected **twice** with numbers before being accepted with numbers.
 
 ---
 
@@ -299,7 +299,7 @@ hand, use the MME ones.
 │       └── medidor.py          # injectable clock, honest p50/p95 (n≥20)
 ├── scripts/                    # hardware, translation, gates harness
 ├── setup_dlls.py               # CUDA 12/13 coexisting (Windows, AV locks)
-├── docs/                       # 25 ADRs with measured evidence + demo/ (video)
+├── docs/                       # 16 ADRs with measured evidence + demo/ (video)
 ├── tests/                      # 399 tests, 100% cov, mutants in CI
 └── .github/workflows/ci.yml    # 5 gates that fail the PR if anything breaks
 ```
