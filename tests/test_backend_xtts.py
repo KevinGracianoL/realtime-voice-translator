@@ -109,28 +109,58 @@ def test_frases_cierra_tras_comilla_de_cierre() -> None:
     assert _frases('He said "stop." Then he left.') == ['He said "stop."', "Then he left."]
 
 
-def test_frases_tope_de_longitud_por_coma_espacio_y_duro() -> None:
-    """Sin tope, un parrafo sin puntuar seria UN chunk gigante (hallazgo del
-    review): `_limitar` acota por coma, por espacio o duro, sin perder texto."""
-    from traductor.tts.backend_xtts import _MAX_CARACTERES_FRASE, _frases
+def test_es_abreviatura_casos_del_contrato() -> None:
+    """Casos quirurgicos de la deteccion (cazan mutantes del review): la
+    comilla de cierre no estorba, la `X` final no se recorta y los limites
+    exactos de las siglas son partes de 1-2 letras."""
+    from traductor.tts.backend_xtts import _es_abreviatura
 
-    exacto = "y" * _MAX_CARACTERES_FRASE
-    assert _frases(exacto) == [exacto]  # == tope: no parte (caza > vs >=)
+    assert _es_abreviatura('"Mr."') is True
+    assert _es_abreviatura("Ph.D") is True  # parte de 2 letras: sigla
+    assert _es_abreviatura("Dr.Who") is False  # parte de 3: no es sigla
+    assert _es_abreviatura("MrX") is False  # la X final no se recorta
 
+
+def test_frases_tokens_raros_no_parten_de_mas() -> None:
+    """Variantes que el review destapo: una palabra con `X` final no es
+    puntuacion fuerte (`XXX`), la comilla de APERTURA del token siguiente no
+    confunde el chequeo de mayuscula (`Xbox`, `"Then"`) y un punto seguido de
+    minuscula no cierra (caza el mutante que ignora el token siguiente)."""
+    from traductor.tts.backend_xtts import _frases
+
+    assert _frases("Marcas XXX y YYY. Fin.") == ["Marcas XXX y YYY.", "Fin."]
+    assert _frases('He said "stop." "Then" he left.') == ['He said "stop."', '"Then" he left.']
+    assert _frases('He said "stop." Xbox is here.') == ['He said "stop."', "Xbox is here."]
+    assert _frases("Hola mundo. seguimos igual.") == ["Hola mundo. seguimos igual."]
+
+
+def test_limitar_parte_por_espacios_guiones_y_palabras_largas() -> None:
+    """Sin tope, un parrafo sin puntuar seria UN chunk gigante (review): los
+    tramos que superan el tope se parten con `textwrap` (stdlib), sin perder
+    texto. Los literales 180/181 fijan el tope aunque la constante mute."""
+    from traductor.tts.backend_xtts import _MAX_CARACTERES_FRASE, _frases, _limitar
+
+    assert _limitar([]) == []
+    assert _limitar(["corta"]) == ["corta"]
+
+    # el tope exacto no parte; un caracter mas, si (literales fijos)
+    assert _limitar(["w" * 180]) == ["w" * 180]
+    assert _limitar(["a" * 181]) == ["a" * 180, "a"]
+    assert _limitar(["y" * _MAX_CARACTERES_FRASE]) == ["y" * _MAX_CARACTERES_FRASE]
+
+    # palabra con guion: textwrap rompe en el guion (default) antes que a lo bruto
+    assert _limitar(["x" * 100 + "-" + "y" * 100]) == ["x" * 100 + "-", "y" * 100]
+
+    # corte por espacios: todos los trozos cabe en el tope y nada se pierde
     palabras = ("palabra " * 40).strip()
-    partes = _frases(palabras)
+    partes = _limitar([palabras])
     assert all(len(parte) <= _MAX_CARACTERES_FRASE for parte in partes)
-    assert " ".join(partes) == palabras  # corta por espacio, sin perder nada
+    assert " ".join(partes) == palabras
 
-    con_comas = ", ".join(["a" * 50] * 5)
-    partes_coma = _frases(con_comas)
-    assert all(len(parte) <= _MAX_CARACTERES_FRASE for parte in partes_coma)
-    assert " ".join(partes_coma) == con_comas  # corta por coma (la conserva)
-
-    duro = "x" * 400
-    partes_duras = _frases(duro)
-    assert all(len(parte) <= _MAX_CARACTERES_FRASE for parte in partes_duras)
-    assert "".join(partes_duras) == duro  # sin espacio ni coma: corte duro
+    # via _frases: frase > tope sin puntuar sale partida en trozos acotados
+    partes_frase = _frases("z" * 400)
+    assert all(len(parte) <= _MAX_CARACTERES_FRASE for parte in partes_frase)
+    assert "".join(partes_frase) == "z" * 400
 
 
 def test_sintetizar_stream_por_frase_con_latentes_cacheadas() -> None:

@@ -13,6 +13,7 @@ de voz; XTTS las usa para clonar el timbre en el idioma de salida.
 
 from __future__ import annotations
 
+import textwrap
 from array import array
 from collections.abc import Iterator, Sequence
 from typing import Any
@@ -47,6 +48,7 @@ def _chunk_a_muestras(chunk: Any) -> list[float]:
 
 
 _CIERRES = "\"'”’»)]}"
+_APERTURAS = "\"'“”‘’«([{"
 _ABREVIATURAS = frozenset(
     {
         "sr",
@@ -99,42 +101,31 @@ def _es_abreviatura(palabra: str) -> bool:
 def _cierra_frase(palabra: str, palabras: list[str], indice: int) -> bool:
     """True si el punto de `palabra` cierra frase (pura).
 
-    Un punto solo cierra si le sigue fin de texto o una mayúscula, y la
-    palabra no es abreviatura: `'3.5 years'` y `'The U.S. team'` siguen en
-    minúscula y no parten; `'Mr. Smith'` sí parece cierre por la mayúscula,
-    y lo frena la lista de abreviaturas.
+    Solo se llama con una palabra siguiente garantizada: en la ultima
+    posicion el corte es indistinguible (la cola agrega el tramo igual) y el
+    llamador no la consulta. Un punto solo cierra si le sigue una mayuscula y
+    la palabra no es abreviatura: `'3.5 years'` y `'The U.S. team'` siguen en
+    minuscula y no parten; `'Mr. Smith'` parece cierre por la mayuscula y lo
+    frena la lista de abreviaturas.
     """
-    if indice + 1 == len(palabras):
-        return True
-    siguiente = palabras[indice + 1].lstrip("\"'“”‘’«([{")
+    siguiente = palabras[indice + 1].lstrip(_APERTURAS)
     if siguiente and not siguiente[0].isupper():
         return False
     return not _es_abreviatura(palabra)
 
 
 def _limitar(frases: list[str]) -> list[str]:
-    """Parte las frases que superan el tope, sin perder texto (pura).
+    """Parte las frases que superan el tope con `textwrap`, sin perder texto (pura).
 
-    Sin tope, un párrafo sin puntuación sería UN chunk gigante: el primer
-    chunk tardaría lo que la síntesis completa (el "Thank you." corto de la
-    demo es guion, no garantía). Corta por coma, luego por espacio, y en
-    último caso duro — cada trozo cabe en `_MAX_CARACTERES_FRASE`.
+    Sin tope, un parrafo sin puntuar seria UN chunk gigante: el primer chunk
+    tardaria lo que la sintesis completa (el "Thank you." corto de la demo es
+    guion, no garantia). `textwrap` (stdlib) corta por espacios y por guiones
+    y parte palabras mas largas que el tope; la reconstruccion con espacios
+    simples reproduce el original.
     """
     resultado: list[str] = []
     for frase in frases:
-        while len(frase) > _MAX_CARACTERES_FRASE:
-            corte = frase.rfind(",", 0, _MAX_CARACTERES_FRASE + 1)
-            if corte > 0:
-                parte, frase = frase[: corte + 1], frase[corte + 1 :].lstrip()
-            else:
-                corte = frase.rfind(" ", 0, _MAX_CARACTERES_FRASE + 1)
-                if corte > 0:
-                    parte, frase = frase[:corte], frase[corte + 1 :]
-                else:
-                    parte, frase = frase[:_MAX_CARACTERES_FRASE], frase[_MAX_CARACTERES_FRASE:]
-            resultado.append(parte)
-        if frase:
-            resultado.append(frase)
+        resultado.extend(textwrap.wrap(frase, width=_MAX_CARACTERES_FRASE))
     return resultado
 
 
@@ -159,7 +150,11 @@ def _frases(texto: str) -> list[str]:
         signo = sin_cierre[-1]
         if signo not in ".!?…:;":
             continue
-        if signo == "." and not _cierra_frase(palabra, palabras, indice):
+        if (
+            signo == "."
+            and indice + 1 < len(palabras)
+            and not _cierra_frase(palabra, palabras, indice)
+        ):
             continue
         frases.append(" ".join(actual))
         actual = []
