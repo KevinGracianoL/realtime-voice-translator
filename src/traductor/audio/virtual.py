@@ -47,7 +47,7 @@ def seleccionar_ruta(
 def validar_ruta(ruta: Mapping[str, str | None]) -> None:
     """Valida que al menos un lado tenga dispositivo.
 
-    Raises:
+    Excepciones:
         ValueError: si ambos son None o si entrevistador es None (modo principal).
     """
     if ruta.get("entrevistador") is None and ruta.get("usuario") is None:

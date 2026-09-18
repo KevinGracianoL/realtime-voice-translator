@@ -22,7 +22,7 @@ _ID_VALIDO = re.compile(r"^[A-Za-z0-9_-]+$")
 def _validar_id(perfil_id: str) -> None:
     """Valida el id con lista blanca antes de cualquier operación de FS.
 
-    Raises:
+    Excepciones:
         ValueError: si el id no es `[A-Za-z0-9_-]+`.
     """
     if not _ID_VALIDO.fullmatch(perfil_id):

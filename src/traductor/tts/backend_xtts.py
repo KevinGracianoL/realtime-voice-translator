@@ -172,7 +172,7 @@ class BackendXtts:
         self._latentes_por_perfil: dict[str, tuple[Any, Any]] = {}
 
     def _cargar(self) -> Any:  # pragma: no cover - requiere coqui_tts + GPU
-        """Carga el modelo una sola vez (lazy). Raises: RuntimeError."""
+        """Carga el modelo una sola vez (lazy). Excepciones: RuntimeError."""
         if self._tts is None:
             try:
                 from TTS.api import TTS
@@ -190,7 +190,7 @@ class BackendXtts:
     def sintetizar(self, texto: str, perfil: VoiceProfile) -> AudioResult:  # pragma: no cover
         """Sintetiza `texto` con el timbre de `perfil.muestras`.
 
-        Raises:
+        Excepciones:
             RuntimeError: si el motor no está disponible (ver `verificar_salud`).
         """
         tts = self._cargar()

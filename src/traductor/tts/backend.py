@@ -25,7 +25,7 @@ class TTSBackend(Protocol):
     def sintetizar(self, texto: str, perfil: VoiceProfile) -> AudioResult:
         """Sintetiza `texto` con el timbre de `perfil`.
 
-        Raises:
+        Excepciones:
             RuntimeError: si el backend no está disponible (ver `verificar_salud`).
         """
         ...
@@ -50,7 +50,7 @@ class TTSBackendStream(Protocol):
     def sintetizar_stream(self, texto: str, perfil: VoiceProfile) -> Iterator[AudioResult]:
         """Sintetiza `texto` por chunks; el generador se cierra al terminar.
 
-        Raises:
+        Excepciones:
             RuntimeError: si el backend no está disponible.
         """
         ...

@@ -16,7 +16,7 @@ from traductor.tts.modelos import VoiceProfile
 def enrolar(perfil_id: str, nombre: str, muestras: Sequence[str | Path]) -> VoiceProfile:
     """Construye un `VoiceProfile` validando las muestras de referencia.
 
-    Raises:
+    Excepciones:
         ValueError: si no hay muestras, alguna no existe, o alguna no es un
         archivo. La validación de `VoiceProfile` (id/nombre) sigue aplicando.
     """

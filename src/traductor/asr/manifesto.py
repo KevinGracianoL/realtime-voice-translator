@@ -24,7 +24,7 @@ class Muestra:
 def cargar_manifesto(ruta_manifesto: Path) -> list[Muestra]:
     """Carga y valida el manifest. Las rutas se resuelven contra su directorio.
 
-    Raises:
+    Excepciones:
         FileNotFoundError: si el archivo no existe.
         ValueError: si la forma es inválida (no lista, o una entrada sin
         ruta/idioma).

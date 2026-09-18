@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 
 def _no_vacio(valor: str, campo: str) -> str:
-    """Limpia y valida un campo obligatorio. Raises: ValueError."""
+    """Limpia y valida un campo obligatorio. Excepciones: ValueError."""
     limpio = valor.strip()
     if not limpio:
         raise ValueError(f"{campo} vacío: se necesita un valor")

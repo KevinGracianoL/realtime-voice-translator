@@ -17,7 +17,7 @@ def cabe_en_presupuesto(etapas: dict[str, float], techo_ms: float) -> bool:
 def etapa_mas_lenta(etapas: dict[str, float]) -> str:
     """Nombre de la etapa con mayor latencia.
 
-    Raises:
+    Excepciones:
         ValueError: si el dict está vacío.
     """
     if not etapas:
@@ -45,7 +45,7 @@ def degradar_configuracion(
     margen de mejora. Si el techo es imposible, devuelve el mejor esfuerzo
     (caller debe verificar con cabe_en_presupuesto).
 
-    Raises:
+    Excepciones:
         ValueError: si algún nombre en orden_degradacion no existe en etapas.
     """
     for nombre in orden_degradacion:

@@ -61,7 +61,7 @@ class BackendB:
         self._se_por_perfil: dict[tuple[str, tuple[str, ...]], Any] = {}
 
     def _cargar_supertonic(self) -> Any:  # pragma: no cover - requiere supertonic
-        """Carga el generador base una sola vez (lazy). Raises: RuntimeError."""
+        """Carga el generador base una sola vez (lazy). Excepciones: RuntimeError."""
         if self._tts is None:
             try:
                 from supertonic import TTS
@@ -78,7 +78,7 @@ class BackendB:
         return self._tts
 
     def _cargar_conversor(self) -> Any:  # pragma: no cover - requiere openvoice
-        """Carga el convertidor de timbre una sola vez (lazy). Raises: RuntimeError.
+        """Carga el convertidor de timbre una sola vez (lazy). Excepciones: RuntimeError.
 
         El repo de OpenVoice no permite desactivar el watermark en el
         constructor (r1 PR #18): se anula tras cargar (no necesitamos la
@@ -145,7 +145,7 @@ class BackendB:
         """Sintetiza `texto` con el timbre de `perfil.muestras`.
 
         Supertonic habla el texto (idioma de salida) y OpenVoice convierte el
-        timbre al del perfil. Raises: RuntimeError si el motor no está
+        timbre al del perfil. Excepciones: RuntimeError si el motor no está
         disponible (ver `verificar_salud`).
         """
         tts = self._cargar_supertonic()
