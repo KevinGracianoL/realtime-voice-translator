@@ -34,6 +34,8 @@
 
 **Lectura honesta del TTFA:** el gate define TTFA = time to first audio; con el contrato no-streaming se mide la síntesis completa (3574 ms). XTTS soporta streaming (`inference_stream`, 6 chunks por frase) y el **primer chunk más rápido observado (655 ms) ya supera el límite por 60 %** — el rechazo no depende del `n` (no se reporta p95 con n=5; la regla del ADR exige n≥20). Las latents de condicionamiento (756 ms) se calculan una vez y no entran al presupuesto por turno (ADR-011).
 
+**Nota (2026-09-18, review PR #34):** los números de streaming de esta ronda se midieron con `inference_stream`; el camino declarado de XTTS es hoy el **batch por frase** con latentes cacheadas (medición en ADR-019: latentes 747–807 ms una vez por perfil, primer chunk ~2.0 s, RTF sostenido 0.76–0.98) y el harness `scripts/medir_gates_tts.py` mide ese camino. Las latentes siguen fuera del presupuesto por turno, como fija este ADR.
+
 **Contexto de RAM (nota):** el valor 11804.9 MiB es el uso de TODA la máquina (`psutil.virtual_memory().used`) y **no se anotó qué había abierto** durante la corrida. Hoy sobra holgura (~6.6 GB), pero el candidato B puede quedar al filo: **las corridas futuras deben anotar el contexto** (navegador, Meet, etc.) como se hace con `nvidia-smi`.
 
 **Veredicto:** un bloqueante basta → **XTTS-v2 RECHAZADO** (sin cuantización agresiva). Sigue **Supertonic 3 CPU + OpenVoice V2 (candidato B)** — este ADR queda como gate de regresión y registro del go/no-go.
