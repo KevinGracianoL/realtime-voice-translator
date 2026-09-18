@@ -340,7 +340,6 @@ hand, use the MME ones.
 - [x] **Phase 3 — The `outgoing_es_to_en` flow** — mic → VAD → ASR es → Argos → teleprompter → XTTS → VB-CABLE, with the degradation ladder (ADR-015)
 - [x] **Phase 4 — 90 min endurance + turn-close fixes** — the long ADR-019 run (417 turns, stable memory) + worker streaming job, block-wise cable and live artifact validation: re-run of 90 min with **692 turns**, turn close p95 **21.3 s → 1.60 s**, late answers 417/417 → **1/692**
 - [x] **Phase 5 — The `incoming_en_to_es` flow** — the interviewer's audio (Meet/Zoom through the virtual cable) → ASR en → Argos EN→ES → **Spanish subtitles** on the teleprompter (ADR-015)
-- [ ] **Optional remote clone (extension)** — dynamic clone of the interviewer's voice: subtitles first; the clone only if the collected samples pass the ADR-015 controls
 
 ---
 
