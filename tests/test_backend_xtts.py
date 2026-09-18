@@ -98,6 +98,9 @@ def test_frases_no_parte_abreviaturas_ni_decimales() -> None:
         "The a.m. flight left.",
         "We arrived.",
     ]
+    # abreviatura en la PENULTIMA posicion (indice + 1 tocando el borde del
+    # guard): debe evaluarse igual y no partir
+    assert _frases("I like Mr. Smith.") == ["I like Mr. Smith."]
 
 
 def test_frases_cierra_tras_comilla_de_cierre() -> None:
