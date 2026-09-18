@@ -1395,15 +1395,21 @@ def test_ajustes_asr_desde_env_usa_los_nombres_del_contrato() -> None:
 
 def test_ajustes_asr_desde_env_device_invalido_falla_rapido() -> None:
     """`CUDA` (mayusculas) revienta al arrancar con mensaje del proyecto, no
-    dentro de CTranslate2 a mitad de la grabacion (review PR #35)."""
+    dentro de CTranslate2 a mitad de la grabacion (review PR #35). Mensaje
+    EXACTO: caza los mutantes del texto (los matches parciales no)."""
     from traductor.flujo.adaptadores import ajustes_asr_desde_env
 
-    with pytest.raises(ValueError, match="TRADUCTOR_ASR_DEVICE invalido: 'CUDA'"):
+    with pytest.raises(ValueError) as excinfo:
         ajustes_asr_desde_env({"TRADUCTOR_ASR_DEVICE": "CUDA"})
+    assert str(excinfo.value) == ("TRADUCTOR_ASR_DEVICE invalido: 'CUDA' (validos: 'cuda', 'cpu')")
 
 
 def test_ajustes_asr_desde_env_modelo_invalido_falla_rapido() -> None:
-    from traductor.flujo.adaptadores import ajustes_asr_desde_env
+    """Mensaje EXACTO construido con la MISMA constante del contrato: caza el
+    mutante del separador del join (review PR #35)."""
+    from traductor.flujo.adaptadores import _MODELOS_ASR, ajustes_asr_desde_env
 
-    with pytest.raises(ValueError, match="TRADUCTOR_MODELO_ASR invalido: 'smal'"):
+    with pytest.raises(ValueError) as excinfo:
         ajustes_asr_desde_env({"TRADUCTOR_MODELO_ASR": "smal"})
+    esperado = f"TRADUCTOR_MODELO_ASR invalido: 'smal' (validos: {', '.join(sorted(_MODELOS_ASR))})"
+    assert str(excinfo.value) == esperado
