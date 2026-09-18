@@ -1375,3 +1375,35 @@ def test_tts_no_stream_con_artefactos_no_reproduce_y_escala() -> None:
     assert flujo.segmento_final("hola") == NIVEL_SUBTITULOS  # solo subtitulos
     assert salida.reproducidos == []
     assert flujo.ultimo_turno_degradado is True
+
+
+def test_ajustes_asr_desde_env_defaults() -> None:
+    """Sin env: modelo small + device cuda (los defaults declarados)."""
+    from traductor.flujo.adaptadores import ajustes_asr_desde_env
+
+    assert ajustes_asr_desde_env({}) == ("small", "cuda")
+
+
+def test_ajustes_asr_desde_env_usa_los_nombres_del_contrato() -> None:
+    """El test fija los NOMBRES de las variables (review PR #35: el cableado
+    del script esta bajo pragma; esto bloquea el drift de nombres)."""
+    from traductor.flujo.adaptadores import ajustes_asr_desde_env
+
+    entorno = {"TRADUCTOR_MODELO_ASR": "base", "TRADUCTOR_ASR_DEVICE": "cpu"}
+    assert ajustes_asr_desde_env(entorno) == ("base", "cpu")
+
+
+def test_ajustes_asr_desde_env_device_invalido_falla_rapido() -> None:
+    """`CUDA` (mayusculas) revienta al arrancar con mensaje del proyecto, no
+    dentro de CTranslate2 a mitad de la grabacion (review PR #35)."""
+    from traductor.flujo.adaptadores import ajustes_asr_desde_env
+
+    with pytest.raises(ValueError, match="TRADUCTOR_ASR_DEVICE invalido: 'CUDA'"):
+        ajustes_asr_desde_env({"TRADUCTOR_ASR_DEVICE": "CUDA"})
+
+
+def test_ajustes_asr_desde_env_modelo_invalido_falla_rapido() -> None:
+    from traductor.flujo.adaptadores import ajustes_asr_desde_env
+
+    with pytest.raises(ValueError, match="TRADUCTOR_MODELO_ASR invalido: 'smal'"):
+        ajustes_asr_desde_env({"TRADUCTOR_MODELO_ASR": "smal"})

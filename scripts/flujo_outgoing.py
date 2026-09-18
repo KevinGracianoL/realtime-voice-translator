@@ -33,12 +33,18 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
         SalidaCable,
         TeleprompterHttp,
         TtsWorkerCliente,
+        ajustes_asr_desde_env,
         perfil_por_defecto,
         python_venv_tts,
         validar_arranque_real,
     )
     from traductor.flujo.outgoing import FlujoOutgoing
     from traductor.traduccion.argos import traducir
+
+    # fail-fast de los env del ASR ANTES de precargar la traduccion (typos de
+    # modelo/device revientan aqui con mensaje del proyecto, no dentro de
+    # CTranslate2 a mitad de la grabacion; review PR #35)
+    modelo_asr, device_asr = ajustes_asr_desde_env(os.environ)
 
     if not validar_arranque_real():
         return  # bloqueante (ADR-014/015): sin traducción offline, no arranca
@@ -78,14 +84,15 @@ def main(argv: list[str] | None = None) -> None:  # pragma: no cover - máquina
                 if os.environ.get("TRADUCTOR_MIC_INDEX")
                 else None
             ),
-            # modelo ASR por env: small (default) transcribe la voz ES con
-            # fidelidad; tiny confundía "un bug" con "a walk" y ese texto
-            # entraba al traductor.
-            modelo=os.environ.get("TRADUCTOR_MODELO_ASR", "small"),
-            # device del ASR por env: en GPUs de 4 GB, "cpu" deja la GPU para
-            # el XTTS y el whisper del incoming (el streaming del TTS deja de
-            # salir con pausas por contención de VRAM).
-            device=os.environ.get("TRADUCTOR_ASR_DEVICE", "cuda"),
+            # modelo ASR por env (default "small", validado al arrancar): el
+            # tiny transcribia la voz ES impreciso ("un bug" -> "a walk") y
+            # ese texto entraba al traductor.
+            modelo=modelo_asr,
+            # device del ASR por env (default "cuda", validado): en GPUs de
+            # 4 GB el ASR en "cpu" deja margen de VRAM para el TTS y el
+            # whisper del incoming. El sintoma de las pausas era el RTF > 1
+            # del camino de sintesis (PR #34, medido), no la VRAM.
+            device=device_asr,
         ).correr()
     except KeyboardInterrupt:
         print("\nFlujo detenido.")

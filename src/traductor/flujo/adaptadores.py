@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -140,9 +141,11 @@ class AsrRealtime:  # pragma: no cover - requiere micrófono + RealtimeSTT
         # (ADR-012) y cabe en la GPU junto al worker. Ajustable por env.
         self._modelo = modelo
         # `device` del ASR (cuda o cpu): en GPUs de 4 GB el XTTS + el whisper
-        # del incoming saturan la VRAM y el streaming del TTS sale con pausas;
-        # mover el ASR del outgoing a CPU deja la GPU para el TTS y el
-        # whisper EN. Ajustable por env (TRADUCTOR_ASR_DEVICE).
+        # del incoming aprietan la VRAM (medido: 3268/4096 MiB con tres
+        # modelos); mover el ASR del outgoing a CPU deja margen para el TTS y
+        # el whisper EN. El sintoma de las pausas era el RTF > 1 del camino de
+        # sintesis (medido en el PR #34), no la VRAM. Ajustable por env con
+        # fail-fast (ajustes_asr_desde_env).
         self._device = device
 
     def _parcial(self, texto: str) -> None:
@@ -823,6 +826,49 @@ def perfil_por_defecto() -> str:
     enrolamiento previo o 'kevin' si no hay ninguno."""
     id_ = os.environ.get("TRADUCTOR_PERFIL_ID", "kevin")
     return id_
+
+
+_MODELOS_ASR = frozenset(
+    {
+        "tiny",
+        "tiny.en",
+        "base",
+        "base.en",
+        "small",
+        "small.en",
+        "medium",
+        "medium.en",
+        "large",
+        "large-v1",
+        "large-v2",
+        "large-v3",
+        "distil-large-v2",
+        "distil-large-v3",
+        "distil-medium.en",
+        "distil-small.en",
+    }
+)
+
+
+def ajustes_asr_desde_env(entorno: Mapping[str, str]) -> tuple[str, str]:
+    """(modelo, device) del ASR del outgoing, validados al arrancar (pura).
+
+    Fail-fast contra typos: sin esto `TRADUCTOR_ASR_DEVICE=CUDA` o un modelo
+    mal escrito llegan a RealtimeSTT y revientan dentro de CTranslate2 a mitad
+    de una grabacion, sin mensaje del proyecto (review PR #35). Los nombres de
+    las variables viven SOLO aqui (el cableado del script va bajo
+    `# pragma: no cover`): los tests de este helper bloquean el drift.
+    """
+    modelo = entorno.get("TRADUCTOR_MODELO_ASR", "small")
+    if modelo not in _MODELOS_ASR:
+        raise ValueError(
+            f"TRADUCTOR_MODELO_ASR invalido: {modelo!r} "
+            f"(validos: {', '.join(sorted(_MODELOS_ASR))})"
+        )
+    device = entorno.get("TRADUCTOR_ASR_DEVICE", "cuda")
+    if device not in ("cuda", "cpu"):
+        raise ValueError(f"TRADUCTOR_ASR_DEVICE invalido: {device!r} (validos: 'cuda', 'cpu')")
+    return modelo, device
 
 
 # Default del `.get("hostApi")` cuando el dict no lo trae: cualquier valor
