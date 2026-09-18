@@ -39,7 +39,7 @@ Después de **tres rondas de medición en hardware real** —y de que las dos pr
 
 **¿Por qué importa?** El techo de 1,5–2 s del ADR-003 **no se inventó ni se copió de un benchmark**: se midió la cadena completa *en esta GPU de 4 GB*, con el ASR co-residente y el micrófono virtual real. La historia completa de las dos métricas mal definidas que detecté yo mismo, corregí y convertí en reglas, vive en [ADR-014](docs/ADR-014-gates-aceptacion-tts.md) — cinco capas de evidencia, ninguna borrada.
 
-**Nota de streaming (medida en la misma GPU):** el `inference_stream` de XTTS rinde **RTF ≈ 1.8** en la GTX 1650 Ti —más lento que tiempo real—: el stream de reproducción se queda sin datos y la voz sale con pausas ("una frase bien, después palabra por palabra"). El backend ahora sintetiza **por frase en batch** (`tts()` completo, **RTF 0.73–0.76** medido) y emite cada frase como chunk al pipeline de cola/writer: la **voz clonada sale fluida** sin cambiar de motor (el aislamiento del ADR-011). En hardware sin Tensor Cores, el streaming continuo del motor queda fuera de presupuesto; el **batch por frase** es el camino declarado, y en GPUs con RTF < 1 sostenido el streaming en vivo queda disponible con el mismo contrato.
+**Nota de streaming (medida en la misma GPU):** el `inference_stream` de XTTS rinde **RTF ≈ 1.8** en la GTX 1650 Ti —más lento que tiempo real—: el stream de reproducción se queda sin datos y la voz sale con pausas ("una frase bien, después palabra por palabra"). El backend sintetiza **por frase en batch**: `inference()` sobre cada frase completa con las latentes del perfil **cacheadas** (una vez por perfil, **747–807 ms** re-medidos) y los settings de generación del config del modelo — **primer chunk ~2.0 s** y **RTF sostenido 0.76–0.98** (n=2; el cómputo es estable, varía la duración del audio muestreado). El review del PR #34 cazó que el primer intento llamaba `tts.tts(speaker_wav=…)`, que **recalcula las latentes en cada llamada** (~100 ms por frase, instrumentado): el camino declarado las conserva. En hardware sin Tensor Cores el streaming continuo del motor queda fuera de presupuesto; en GPUs con RTF < 1 sostenido el streaming en vivo queda disponible con el mismo contrato.
 
 ---
 
@@ -51,7 +51,7 @@ Después de **tres rondas de medición en hardware real** —y de que las dos pr
 2. **Respondes en español** por tu micrófono; la respuesta aparece en pantalla al cerrar el turno.
 3. Tu **voz clonada en inglés** sale por el VAIO hacia el micrófono virtual, **fluida** — es el batch por frase de arriba (con `inference_stream` el buffer se agotaba y se oía entrecortada).
 
-La pausa de ~14 s entre tu respuesta y la voz en inglés es la espera declarada del batch por frase (cierre del turno 4–11 s según la frase); en GPUs con RTF < 1 sostenido ese cierre baja, con el mismo contrato del ADR-019.
+La pausa de ~14 s entre tu respuesta y la voz en inglés es la espera declarada, medida en los logs de esta misma corrida: 2.5 s de detección de fin de turno + cierre de 4.2–11.5 s (traducción 0.2–0.7 s + TTS 4.2–10.7 s + ruteo < 0.03 s). El primer chunk suena en ~2 s con la GPU libre; en la demo la comparte con los ASR del flujo.
 
 ---
 
@@ -145,7 +145,7 @@ Cada uno de estos escenarios tiene su test **RED → GREEN**: se escribió el te
 |---|---|---|
 | **ASR** | `faster-whisper` `int8` | TU117 sin Tensor Cores → FP16 emulado, INT8 en cores enteros |
 | **Traducción** | `argos-translate` + `ctranslate2` | Offline, CPU, gratis; `ARGOS_COMPUTE_TYPE=default` obligatorio |
-| **TTS** | **XTTS-v2** (fork `coqui-tts`) | Tu voz en inglés, streaming `inference_stream`, perfil pre-enrolado |
+| **TTS** | **XTTS-v2** (fork `coqui-tts`) | Tu voz en inglés, batch por frase (`inference` + latentes cacheadas), perfil pre-enrolado |
 | **Salida de audio** | VB-CABLE + VoiceMeeter | Dos tubos virtuales (entrevistador / tu voz EN), ruta por nombre y env |
 | **Medición** | `time.perf_counter` inyectable + `RegistroEtapas` | Atribución al 100 %, p95 honesto (n≥20) |
 | **UI** | `FastAPI` + teleprompter ES+EN | `localhost:8000`, deploy Caddy |

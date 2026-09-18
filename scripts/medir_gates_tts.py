@@ -6,7 +6,8 @@ None si falta):
 - las etapas que antes eran supuestos: ASR p95, traducción Argos p95, ruteo a
   VB-CABLE p95 — el presupuesto de TTFA se DERIVA de ellas (2000 ms − etapas),
   nunca se declara;
-- el TTFA como PRIMER CHUNK reproducible (inference_stream caliente para XTTS;
+- el TTFA como PRIMER CHUNK reproducible (batch por frase caliente para XTTS,
+  review PR #34: la primera frase completa de `sintetizar_stream`;
   síntesis completa para motores sin streaming, documentado);
 - el PIPELINE COMPLETO end-to-end (audio de entrada -> primer audio en el
   micrófono virtual) con cable si VB-CABLE está instalado;
@@ -361,28 +362,35 @@ def _medir_ruteo_p95(n: int, cable: str | None) -> float | None:
 
 
 def _latentes_xtts(motor: Any, perfil: VoiceProfile) -> tuple[Any, Any]:
-    """Latentes del perfil para inference_stream (una vez, como el flujo real)."""
-    motor.sintetizar("warm-up de carga del modelo", perfil)  # carga lazy + calienta
-    latentes = motor._tts.synthesizer.tts_model.get_conditioning_latents(
-        audio_path=list(perfil.muestras)
-    )
-    return (latentes[0], latentes[1])
+    """Latentes del perfil en el BACKEND, cacheadas (como el flujo real).
 
-
-def _primer_chunk_xtts(motor: Any, texto: str, latentes: tuple[Any, Any]) -> Any:
-    """Primer chunk reproducible de inference_stream (TTFA, definición corregida).
-
-    El generador se CIERRA tras el primer chunk: dejarlo abandonado mantiene
-    el estado de streaming en la GPU y contamina las etapas siguientes del
-    harness (el ASR encadenado media 768-1829 ms con la misma rebanada que
-    aislada da ~165 ms - el diagnostico lo aisló).
+    Desde el review del PR #34 el camino declarado es el batch por frase de
+    `sintetizar_stream`, que pide `_latentes` la primera vez y las cachea por
+    perfil: medirlas aquí las deja fuera del p95 (ADR-014: no entran al
+    presupuesto por turno). El resultado se devuelve como discriminador de
+    motor con streaming en el resto del harness.
     """
-    gpt, spk = latentes
-    generador = motor._tts.synthesizer.tts_model.inference_stream(texto, "en", gpt, spk)
+    motor.sintetizar("warm-up de carga del modelo", perfil)  # carga lazy + calienta
+    latentes: tuple[Any, Any] = motor._latentes(perfil)
+    return latentes
+
+
+def _primer_chunk_xtts(motor: Any, perfil: VoiceProfile, texto: str) -> Any:
+    """Primer chunk del camino declarado: batch por frase (review PR #34).
+
+    `sintetizar_stream` sintetiza la PRIMERA FRASE completa con `inference` y
+    las latentes cacheadas (ya calentadas por `_latentes_xtts`); el chunk es
+    esa frase, no el texto completo. El generador se CIERRA tras el primer
+    chunk para no dejar estado de síntesis vivo en las etapas siguientes.
+    """
+    import numpy as np
+
+    generador = motor.sintetizar_stream(texto, perfil)
     try:
-        return next(generador)
+        resultado = next(generador)
     finally:
         generador.close()
+    return np.frombuffer(resultado.datos, dtype=np.float32)
 
 
 def _chunk_a_pcm16(chunk: Any) -> bytes:
@@ -405,12 +413,13 @@ def _medir_ttfa_primer_chunk_p95(
 ) -> float | None:
     """TTFA caliente p95 = PRIMER CHUNK reproducible (n>=20).
 
-    Con latentes (XTTS): primer chunk de `inference_stream`. Sin streaming
-    (candidato B): primer chunk = síntesis completa, documentado en ADR-014.
+    Con latentes (XTTS): primera frase completa de `sintetizar_stream` (batch
+    por frase del PR #34). Sin streaming (candidato B): primer chunk = síntesis
+    completa, documentado en ADR-014.
     """
     if latentes is None:
         return _medir_p95(partial(motor.sintetizar, texto, perfil), n, "ttfa")
-    return _medir_p95(partial(_primer_chunk_xtts, motor, texto, latentes), n, "ttfa")
+    return _medir_p95(partial(_primer_chunk_xtts, motor, perfil, texto), n, "ttfa")
 
 
 def _ventanas_pipeline(whisper: Any, muestras: np.ndarray, sr: int) -> list[np.ndarray]:
@@ -524,7 +533,7 @@ def _medir_pipeline_p95(
             texto_en = traducir(texto_es, "es", "en")
             registro.marcar("traduccion")
             if latentes is not None:
-                chunk = _primer_chunk_xtts(motor, texto_en, latentes)
+                chunk = _primer_chunk_xtts(motor, perfil, texto_en)
             else:
                 chunk = motor.sintetizar(texto_en, perfil)
             registro.marcar("tts_primer_chunk")
