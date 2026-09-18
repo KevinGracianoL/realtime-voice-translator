@@ -1393,6 +1393,36 @@ def test_ajustes_asr_desde_env_usa_los_nombres_del_contrato() -> None:
     assert ajustes_asr_desde_env(entorno) == ("base", "cpu")
 
 
+def test_modelos_asr_cubren_los_del_upstream_de_faster_whisper() -> None:
+    """Lista exacta de faster-whisper 1.2 (`faster_whisper.utils._MODELS`):
+    incluye `large-v3-turbo`, `turbo` y `distil-large-v3.5`, que el review r2
+    noto faltaban (darlos por invalido parecia un typo). Si el upstream suma
+    un modelo, este test lo delata y el contrato se actualiza."""
+    from traductor.flujo.adaptadores import _MODELOS_ASR
+
+    assert {
+        "tiny",
+        "tiny.en",
+        "base",
+        "base.en",
+        "small",
+        "small.en",
+        "medium",
+        "medium.en",
+        "large",
+        "large-v1",
+        "large-v2",
+        "large-v3",
+        "large-v3-turbo",
+        "turbo",
+        "distil-large-v2",
+        "distil-large-v3",
+        "distil-large-v3.5",
+        "distil-medium.en",
+        "distil-small.en",
+    } == _MODELOS_ASR
+
+
 def test_ajustes_asr_desde_env_device_invalido_falla_rapido() -> None:
     """`CUDA` (mayusculas) revienta al arrancar con mensaje del proyecto, no
     dentro de CTranslate2 a mitad de la grabacion (review PR #35). Mensaje

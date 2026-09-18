@@ -842,8 +842,11 @@ _MODELOS_ASR = frozenset(
         "large-v1",
         "large-v2",
         "large-v3",
+        "large-v3-turbo",
+        "turbo",
         "distil-large-v2",
         "distil-large-v3",
+        "distil-large-v3.5",
         "distil-medium.en",
         "distil-small.en",
     }
