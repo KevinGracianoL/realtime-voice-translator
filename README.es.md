@@ -18,7 +18,7 @@
 ![16 ADRs](https://img.shields.io/badge/decisiones-16%20ADRs-2A6DB5?style=flat-square)
 ![License MIT](https://img.shields.io/badge/license-MIT-yellow?style=flat-square)
 
-**Demo en vivo → [traductor-demo.kevingraciano.dev](https://traductor-demo.kevingraciano.dev)** · **Por [Kevin Graciano](https://github.com/KevinGracianoL)**
+**Por [Kevin Graciano](https://github.com/KevinGracianoL)** — clona el repo y córrelo en local (ver Instalación/Uso).
 
 *Un traductor pensado para entrevistas reales — no para demos. Cada decisión tiene su ADR, cada ADR tiene sus números, y los números se tomaron en la máquina que va a sostener la entrevista.*
 
@@ -150,7 +150,7 @@ Cada uno de estos escenarios tiene su test **RED → GREEN**: se escribió el te
 | **TTS** | **XTTS-v2** (fork `coqui-tts`) | Tu voz en inglés, batch por frase (`inference` + latentes cacheadas), perfil pre-enrolado |
 | **Salida de audio** | VB-CABLE + VoiceMeeter | Dos tubos virtuales (entrevistador / tu voz EN), ruta por nombre y env |
 | **Medición** | `time.perf_counter` inyectable + `RegistroEtapas` | Atribución al 100 %, p95 honesto (n≥20) |
-| **UI** | `FastAPI` + teleprompter ES+EN | `localhost:8000`, deploy Caddy |
+| **UI** | `FastAPI` + teleprompter ES+EN | `localhost:8000` |
 | **Calidad** | `ruff` · `mypy --strict` · `pytest` · `mutmut` | 5 gates, CI en GitHub Actions |
 
 **Licencias declaradas (una por una):** código MIT · pesos XTTS-v2 **Coqui Public Model License** (uso personal no comercial — el proyecto declara la restricción, no la silencia) · OpenVoice V2 MIT · Supertonic 3 OpenRAIL-M. *CosyVoice 3 (Apache-2.0) queda anotado como candidato futuro para quitar el techo no-comercial.*
