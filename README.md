@@ -43,6 +43,18 @@ Después de **tres rondas de medición en hardware real** —y de que las dos pr
 
 ---
 
+## 🎬 La demo (video)
+
+**[`docs/demo/demo_portafolio.mp4`](docs/demo/demo_portafolio.mp4)** — una corrida completa grabada en esta máquina (1 min 4 s, audio real del sistema):
+
+1. El **entrevistador** habla en inglés (llega por el VB-CABLE) y el teleprompter muestra su texto con la traducción en español.
+2. **Respondes en español** por tu micrófono; la respuesta aparece en pantalla al cerrar el turno.
+3. Tu **voz clonada en inglés** sale por el VAIO hacia el micrófono virtual, **fluida** — es el batch por frase de arriba (con `inference_stream` el buffer se agotaba y se oía entrecortada).
+
+La pausa de ~14 s entre tu respuesta y la voz en inglés es la espera declarada del batch por frase (cierre del turno 4–11 s según la frase); en GPUs con RTF < 1 sostenido ese cierre baja, con el mismo contrato del ADR-019.
+
+---
+
 ## 🎯 Qué resuelve
 
 En una entrevista en inglés, un error de traducción no es un bug — **es la respuesta equivocada**.
