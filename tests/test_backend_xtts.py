@@ -69,37 +69,142 @@ def test_frases_parte_por_puntuacion_fuerte() -> None:
     assert _frases("¿Que? Si.") == ["¿Que?", "Si."]
     assert _frases("Bueno… seguimos") == ["Bueno…", "seguimos"]
     assert _frases("Uno; dos.") == ["Uno;", "dos."]
+    # tokens de solo cierres o solo puntuacion: no rompen el recorrido
+    assert _frases("Uno » Dos.") == ["Uno » Dos."]
+    assert _frases("Hola ... Seguimos.") == ["Hola ...", "Seguimos."]
 
 
-def test_sintetizar_stream_por_frase_batch() -> None:
-    """`sintetizar_stream` emite UN AudioResult por frase, con batch `tts.tts`
-    (no el inference_stream lento): RTF medido 1.8 vs 0.73 en la 1650 Ti."""
+def test_frases_no_parte_abreviaturas_ni_decimales() -> None:
+    """El punto tras abreviatura, sigla o decimal NO cierra frase (review PR
+    #34: partir `'Mr. Smith…'` o `'The U.S. team…'` sonaba a fin de oracion
+    en medio, y `'3.5'` ya quedaba bien porque no termina en punto)."""
     from traductor.tts.backend_xtts import _frases
 
+    assert _frases("I worked there for 3.5 years. The U.S. team was great.") == [
+        "I worked there for 3.5 years.",
+        "The U.S. team was great.",
+    ]
+    assert _frases("Mr. Smith led the project. Version 2.0 shipped.") == [
+        "Mr. Smith led the project.",
+        "Version 2.0 shipped.",
+    ]
+    # sigla seguida de MAYUSCULA: la frena la lista de siglas, no el guard de
+    # minuscula (sin esto, `U.S.` partiria en `'The U.S.'` + `'Team…'`)
+    assert _frases("The U.S. Team arrived. We left.") == [
+        "The U.S. Team arrived.",
+        "We left.",
+    ]
+    assert _frases("The a.m. flight left. We arrived.") == [
+        "The a.m. flight left.",
+        "We arrived.",
+    ]
+
+
+def test_frases_cierra_tras_comilla_de_cierre() -> None:
+    """`'He said \"stop.\" Then he left.'` parte: el punto esta antes de la
+    comilla de cierre y el token siguiente sigue en mayuscula (review PR #34:
+    el camino viejo no partia aqui)."""
+    from traductor.tts.backend_xtts import _frases
+
+    assert _frases('He said "stop." Then he left.') == ['He said "stop."', "Then he left."]
+
+
+def test_frases_tope_de_longitud_por_coma_espacio_y_duro() -> None:
+    """Sin tope, un parrafo sin puntuar seria UN chunk gigante (hallazgo del
+    review): `_limitar` acota por coma, por espacio o duro, sin perder texto."""
+    from traductor.tts.backend_xtts import _MAX_CARACTERES_FRASE, _frases
+
+    exacto = "y" * _MAX_CARACTERES_FRASE
+    assert _frases(exacto) == [exacto]  # == tope: no parte (caza > vs >=)
+
+    palabras = ("palabra " * 40).strip()
+    partes = _frases(palabras)
+    assert all(len(parte) <= _MAX_CARACTERES_FRASE for parte in partes)
+    assert " ".join(partes) == palabras  # corta por espacio, sin perder nada
+
+    con_comas = ", ".join(["a" * 50] * 5)
+    partes_coma = _frases(con_comas)
+    assert all(len(parte) <= _MAX_CARACTERES_FRASE for parte in partes_coma)
+    assert " ".join(partes_coma) == con_comas  # corta por coma (la conserva)
+
+    duro = "x" * 400
+    partes_duras = _frases(duro)
+    assert all(len(parte) <= _MAX_CARACTERES_FRASE for parte in partes_duras)
+    assert "".join(partes_duras) == duro  # sin espacio ni coma: corte duro
+
+
+def test_sintetizar_stream_por_frase_con_latentes_cacheadas() -> None:
+    """`sintetizar_stream` emite UN AudioResult por frase via `inference` con
+    las latentes del perfil CACHEADAS (una vez por perfil, ADR-011/014): el
+    review demostro que `tts.tts(speaker_wav=...)` las recalcula en cada
+    llamada (756 ms por frase)."""
     backend = BackendXtts()
-    llamadas: list[tuple[str, list[str], str]] = []
+    inferencias: list[tuple[str, str, object, object]] = []
+    ajustes_recibidos: list[dict[str, object]] = []
+
+    class _ConfigFake:
+        temperature = 0.75
+        length_penalty = 1.0
+        repetition_penalty = 5.0
+        top_k = 50
+        top_p = 0.85
+
+    class _ModeloFake:
+        def __init__(self) -> None:
+            self.config = _ConfigFake()
+            self.latentes_pedidas: list[list[str]] = []
+
+        def get_conditioning_latents(self, audio_path: list[str]) -> tuple[str, str]:
+            self.latentes_pedidas.append(list(audio_path))
+            return ("gpt-cond", "spk-emb")
+
+        def inference(
+            self, texto: str, language: str, gpt: object, spk: object, **ajustes: object
+        ) -> dict[str, list[float]]:
+            inferencias.append((texto, language, gpt, spk))
+            ajustes_recibidos.append(ajustes)
+            return {"wav": [0.1] * 240}  # 0.01 s de audio por frase
+
+    class _SynthesizerFake:
+        def __init__(self) -> None:
+            self.tts_model = _ModeloFake()
 
     class _TtsFake:
-        def tts(
-            self,
-            texto: str,
-            speaker_wav: list[str],
-            language: str,
-            split_sentences: bool = True,
-        ) -> list[float]:
-            llamadas.append((texto, speaker_wav, language))
-            assert split_sentences is False  # la frase ya es una unidad
-            return [0.1] * 240  # 0.01 s de audio por frase
+        def __init__(self) -> None:
+            self.synthesizer = _SynthesizerFake()
 
     backend._tts = _TtsFake()
+    modelo = backend._tts.synthesizer.tts_model
     salidas = list(backend.sintetizar_stream("Uno. Dos!", PERFIL))
-    assert len(salidas) == len(_frases("Uno. Dos!"))
-    assert [c[0] for c in llamadas] == ["Uno.", "Dos!"]
-    assert llamadas[0][1] == list(PERFIL.muestras)
-    assert llamadas[0][2] == "en"
+    assert len(salidas) == 2
+    assert [c[0] for c in inferencias] == ["Uno.", "Dos!"]
+    assert inferencias[0][1] == "en"
+    assert inferencias[0][2] == "gpt-cond"  # latentes[0] -> gpt
+    assert inferencias[0][3] == "spk-emb"  # latentes[1] -> speaker
+    # los settings del config van a inference: con los defaults del metodo el
+    # audio cambia (repetition_penalty 10 vs 5 medido, review PR #34)
+    assert ajustes_recibidos[0] == {
+        "temperature": 0.75,
+        "length_penalty": 1.0,
+        "repetition_penalty": 5.0,
+        "top_k": 50,
+        "top_p": 0.85,
+    }
+    assert all(ajustes == ajustes_recibidos[0] for ajustes in ajustes_recibidos)
+    assert modelo.latentes_pedidas == [list(PERFIL.muestras)]  # UNA vez
     for salida in salidas:
         assert salida.formato == "pcm_f32le"
         assert salida.duracion_s == pytest.approx(240 / 24000)
+
+    # segundo texto del MISMO perfil: la cache no recalcula
+    list(backend.sintetizar_stream("Tres.", PERFIL))
+    assert len(modelo.latentes_pedidas) == 1
+
+    # perfil distinto: recalcula (la clave de cache es el id)
+    otro = VoiceProfile(id="otro", nombre="Otro", muestras=("x.wav",))
+    list(backend.sintetizar_stream("Cuatro.", otro))
+    assert len(modelo.latentes_pedidas) == 2
+    assert modelo.latentes_pedidas[1] == ["x.wav"]
 
 
 def test_verificar_salud_con_modelo_cargado() -> None:

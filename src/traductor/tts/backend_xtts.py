@@ -46,24 +46,126 @@ def _chunk_a_muestras(chunk: Any) -> list[float]:
     return [float(v) for v in plano]
 
 
+_CIERRES = "\"'”’»)]}"
+_ABREVIATURAS = frozenset(
+    {
+        "sr",
+        "sra",
+        "srta",
+        "dr",
+        "dra",
+        "prof",
+        "ud",
+        "uds",
+        "etc",
+        "aprox",
+        "pag",
+        "pág",
+        "num",
+        "núm",
+        "mr",
+        "mrs",
+        "ms",
+        "jr",
+        "st",
+        "mt",
+        "vs",
+        "no",
+        "vol",
+        "fig",
+        "al",
+        "ca",
+    }
+)
+_MAX_CARACTERES_FRASE = 180
+
+
+def _es_abreviatura(palabra: str) -> bool:
+    """True si el token termina en abreviatura o sigla con puntos (pura).
+
+    `'Mr.'` y `'U.S.'` no cierran frase; `'years.'` y `'stop.'` sí. Las siglas
+    se detectan por forma (partes de hasta 2 letras: `U.S`, `e.g`, `a.m`) y las
+    abreviaturas por lista — sin esto, el batch parte `'Mr. Smith…'` en dos
+    unidades y la entonación cierra donde no toca (hallazgo del review).
+    """
+    nucleo = palabra.strip(_CIERRES).rstrip(".,;:!?…")
+    if not nucleo:
+        return False
+    if "." in nucleo:
+        return all(1 <= len(parte) <= 2 for parte in nucleo.split("."))
+    return nucleo.lower() in _ABREVIATURAS
+
+
+def _cierra_frase(palabra: str, palabras: list[str], indice: int) -> bool:
+    """True si el punto de `palabra` cierra frase (pura).
+
+    Un punto solo cierra si le sigue fin de texto o una mayúscula, y la
+    palabra no es abreviatura: `'3.5 years'` y `'The U.S. team'` siguen en
+    minúscula y no parten; `'Mr. Smith'` sí parece cierre por la mayúscula,
+    y lo frena la lista de abreviaturas.
+    """
+    if indice + 1 == len(palabras):
+        return True
+    siguiente = palabras[indice + 1].lstrip("\"'“”‘’«([{")
+    if siguiente and not siguiente[0].isupper():
+        return False
+    return not _es_abreviatura(palabra)
+
+
+def _limitar(frases: list[str]) -> list[str]:
+    """Parte las frases que superan el tope, sin perder texto (pura).
+
+    Sin tope, un párrafo sin puntuación sería UN chunk gigante: el primer
+    chunk tardaría lo que la síntesis completa (el "Thank you." corto de la
+    demo es guion, no garantía). Corta por coma, luego por espacio, y en
+    último caso duro — cada trozo cabe en `_MAX_CARACTERES_FRASE`.
+    """
+    resultado: list[str] = []
+    for frase in frases:
+        while len(frase) > _MAX_CARACTERES_FRASE:
+            corte = frase.rfind(",", 0, _MAX_CARACTERES_FRASE + 1)
+            if corte > 0:
+                parte, frase = frase[: corte + 1], frase[corte + 1 :].lstrip()
+            else:
+                corte = frase.rfind(" ", 0, _MAX_CARACTERES_FRASE + 1)
+                if corte > 0:
+                    parte, frase = frase[:corte], frase[corte + 1 :]
+                else:
+                    parte, frase = frase[:_MAX_CARACTERES_FRASE], frase[_MAX_CARACTERES_FRASE:]
+            resultado.append(parte)
+        if frase:
+            resultado.append(frase)
+    return resultado
+
+
 def _frases(texto: str) -> list[str]:
     """Parte `texto` en frases por puntuación fuerte, conservándola (pura).
 
     El batch por frase necesita unidades cortas: la primera debe estar lista
     rápido (cierre del turno) y cada una debe generarse más rápido de lo que
     suena (RTF < 1 sostenido). Puntúa también `:` y `;` porque el habla hace
-    pausa ahí y unidades más cortas sostienen mejor el tiempo real.
+    pausa ahí y unidades más cortas sostienen mejor el tiempo real. Los
+    puntos de abreviaturas, decimales y siglas no parten (ver `_es_abreviatura`
+    y `_cierra_frase`), y `_limitar` acota los tramos sin puntuar.
     """
+    palabras = texto.split()
     frases: list[str] = []
     actual: list[str] = []
-    for palabra in texto.split():
+    for indice, palabra in enumerate(palabras):
         actual.append(palabra)
-        if palabra.endswith((".", "!", "?", "…", ":", ";")):
-            frases.append(" ".join(actual))
-            actual = []
+        sin_cierre = palabra.rstrip(_CIERRES)
+        if not sin_cierre:
+            continue
+        signo = sin_cierre[-1]
+        if signo not in ".!?…:;":
+            continue
+        if signo == "." and not _cierra_frase(palabra, palabras, indice):
+            continue
+        frases.append(" ".join(actual))
+        actual = []
     if actual:
         frases.append(" ".join(actual))
-    return frases
+    return _limitar(frases)
 
 
 class BackendXtts:
@@ -72,6 +174,7 @@ class BackendXtts:
     def __init__(self, idioma_salida: str = "en") -> None:
         self._idioma_salida = idioma_salida
         self._tts: Any | None = None
+        self._latentes_por_perfil: dict[str, tuple[Any, Any]] = {}
 
     def _cargar(self) -> Any:  # pragma: no cover - requiere coqui_tts + GPU
         """Carga el modelo una sola vez (lazy). Raises: RuntimeError."""
@@ -105,26 +208,49 @@ class BackendXtts:
         return pcm_a_audio_result(wav, SR_XTTS)
 
     def sintetizar_stream(self, texto: str, perfil: VoiceProfile) -> Iterator[AudioResult]:
-        """Sintetiza POR FRASE en batch: cada frase completa es un chunk.
+        """Sintetiza POR FRASE en batch con latentes cacheadas por perfil.
 
-        El camino anterior (`inference_stream`) generaba en incrementos
-        pequeños y midió **RTF ~1.8 en la GTX 1650 Ti** (más lento que tiempo
-        real: el stream de reproducción se quedaba sin datos y la voz salía
-        "una frase bien, después palabra por palabra con pausas"). El batch
-        por frase de `tts.tts()` mide **RTF 0.73-0.76** (más rápido que tiempo
-        real) y una frase corta inicial ("Thank you.") devuelve el primer
-        chunk en <1 s: el pipeline de cola/writer del `SalidaCable` (ADR-019)
-        no cambia, solo el ritmo de producción.
+        Es el camino declarado tras el review del PR #34: conserva la ganancia
+        del batch (RTF < 1 sostenido) Y la caché del ADR-011/014/019 — llamar
+        `tts.tts(frase, speaker_wav=...)` recalcula las latentes de
+        condicionamiento (756 ms) en CADA llamada, porque el fork solo las
+        cachea con `speaker_id` y aquí el perfil llega pre-enrolado con
+        referencias.         `inference()` es el gemelo no-streaming del
+        `inference_stream` viejo: mismo vocoder, sin el bucle de streaming que
+        medía RTF ~1.8 en la GTX 1650 Ti (el `SalidaCable` reproduce a 1x y el
+        buffer se agotaba: "una frase bien, después palabra por palabra").
+        Aplica los settings de generación del config del modelo (temperatura,
+        penalizaciones, top-k/p): los defaults del método difieren del config
+        y el audio cambia (medido: `repetition_penalty` 10 vs 5).
+
+        Cada frase completa es un chunk al pipeline de cola/writer del
+        ADR-019 (contrato intacto); `_frases` garantiza que la primera sea
+        corta y `_limitar` acota los tramos sin puntuar.
         """
         tts = self._cargar()
+        modelo = tts.synthesizer.tts_model
+        config = modelo.config
+        ajustes = {
+            "temperature": config.temperature,
+            "length_penalty": config.length_penalty,
+            "repetition_penalty": config.repetition_penalty,
+            "top_k": config.top_k,
+            "top_p": config.top_p,
+        }
+        gpt, spk = self._latentes(perfil)
         for frase in _frases(texto):
-            wav = tts.tts(
-                frase,
-                speaker_wav=list(perfil.muestras),
-                language=self._idioma_salida,
-                split_sentences=False,
-            )
+            wav = modelo.inference(frase, self._idioma_salida, gpt, spk, **ajustes)["wav"]
             yield pcm_a_audio_result(_chunk_a_muestras(wav))  # sr default = SR_XTTS
+
+    def _latentes(self, perfil: VoiceProfile) -> tuple[Any, Any]:
+        """Latentes del perfil, cacheadas (una vez por id de perfil, ADR-014)."""
+        if perfil.id not in self._latentes_por_perfil:
+            tts = self._cargar()
+            latentes = tts.synthesizer.tts_model.get_conditioning_latents(
+                audio_path=list(perfil.muestras)
+            )
+            self._latentes_por_perfil[perfil.id] = (latentes[0], latentes[1])
+        return self._latentes_por_perfil[perfil.id]
 
     def verificar_salud(self) -> Salud:
         """Estado SIN efectos secundarios: no carga el modelo (r1 PR #16).
