@@ -51,7 +51,7 @@ def test_frase_repetida_ngramas() -> None:
 def test_frase_repetida_robusta_a_basura() -> None:
     """El bucle de whisper con basura alrededor: 3 copias + cola distinta.
 
-    DeepSeek midió 'I don't know what you're talking about' x3 con tiny sobre
+    Medido: 'I don't know what you're talking about' x3 con tiny sobre
     un fragmento de 12.5 s. El filtro debe atraparlo aunque whisper varíe el
     final (no exige que TODO el texto sea copias exactas)."""
     frase = "I don't know what you're talking about"

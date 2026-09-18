@@ -26,7 +26,7 @@ class FlujoASR(Protocol):
     `segmento_final` devuelve el nivel de la escalera (int en outgoing) o un
     bool (incoming): el retorno `object` cubre ambas. Parámetros positional-only
     (`/`): los flujos nombran el texto distinto (`texto_es` / `texto_en`) y el
-    nombre no debe importar en el protocol (Hal r1 del PR #25: `Any` apagaba
+    nombre no debe importar en el protocol (revisión r1 del PR #25: `Any` apagaba
     mypy --strict sobre estos métodos).
     """
 

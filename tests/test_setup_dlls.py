@@ -268,7 +268,7 @@ def test_copiar_dlls_agota_reintentos_y_conserva_vieja(
 def test_copiar_dlls_copy_sucio_no_pierde_backup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Doble que escribe basura y luego revienta: el backup no se corrompe (Hal r5)."""
+    """Doble que escribe basura y luego revienta: el backup no se corrompe (revisión r5)."""
     import shutil
 
     from setup_dlls import copiar_dlls
@@ -301,7 +301,7 @@ def test_copiar_dlls_copy_sucio_no_pierde_backup(
 
 
 def test_copiar_dlls_parcial_no_borrable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """El parcial que tampoco se puede borrar no revienta el retry (Hal r3 PR14).
+    """El parcial que tampoco se puede borrar no revienta el retry (revisión r3 del PR #14).
 
     `os.remove` del parcial lanza PermissionError (lock del AV): el
     `suppress(PermissionError)` lo absorbe y el flujo llega al error claro.

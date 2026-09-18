@@ -61,7 +61,7 @@ def test_normalizar_texto_conserva_tildes_y_digitos() -> None:
 
 
 def test_wer_con_puntuacion_es_cero() -> None:
-    """Transcripción perfecta con puntuación/mayúsculas: WER 0 (Hal r1)."""
+    """Transcripción perfecta con puntuación/mayúsculas: WER 0 (revisión r1)."""
     assert wer("si claro", "Si, claro!") == 0.0
     assert wer("hola como estas", "Hola, como estas?") == 0.0
     assert wer("el cafe esta frio", "El cafe esta frio.") == 0.0
@@ -158,7 +158,7 @@ def test_tabla_comparativa_vacia() -> None:
 
 
 def test_tabla_comparativa_wer_n_visible() -> None:
-    """n=2 con WER calculado sobre una muestra: la tabla lo muestra (Hal r1)."""
+    """n=2 con WER calculado sobre una muestra: la tabla lo muestra (revisión r1)."""
     resumen: dict[str, dict[str, float | None]] = {
         "faster-whisper|es": {
             "n": 2.0,

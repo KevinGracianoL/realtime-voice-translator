@@ -1,6 +1,6 @@
 """Tests del worker TTS aislado — protocolo job/resultado con backend inyectado.
 
-Cubre el camino feliz y los modos de fallo del protocolo (Hal r1): escritura
+Cubre el camino feliz y los modos de fallo del protocolo (revisión r1): escritura
 que falla, salida fuera del directorio, perfil inválido, y que el worker NUNCA
 muere por un job malo.
 """
@@ -137,7 +137,7 @@ def test_procesar_job_backend_falla_no_mata(tmp_path: Path) -> None:
 
 
 def test_procesar_job_escritura_falla_no_mata(tmp_path: Path) -> None:
-    """mkdir/write_bytes fallan (causa externa esperable): error, no crash (Hal r1)."""
+    """mkdir/write_bytes fallan (causa externa esperable): error, no crash (revisión r1)."""
     bloque = tmp_path / "archivo.txt"
     bloque.write_bytes(b"x")
     job = Job(texto="hola", perfil_id="kevin-es", salida="archivo.txt/debajo.wav")
@@ -149,7 +149,7 @@ def test_procesar_job_escritura_falla_no_mata(tmp_path: Path) -> None:
 
 
 def test_procesar_job_salida_fuera_directorio(tmp_path: Path) -> None:
-    """salida con '..' se rechaza: nunca se escribe fuera (Hal r1)."""
+    """salida con '..' se rechaza: nunca se escribe fuera (revisión r1)."""
     fuera = tmp_path.parent / "fuera.wav"
     job = Job(texto="hola", perfil_id="kevin-es", salida="../fuera.wav")
     resultado = procesar_job(

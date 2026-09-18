@@ -127,7 +127,7 @@ def test_tienda_guardar_crea_directorio(tmp_path: Path) -> None:
 
 
 def test_tienda_id_fuera_del_directorio_raise(tmp_path: Path) -> None:
-    """id con '..' o '/': lista blanca, default-deny — nunca toca el FS (Hal r1)."""
+    """id con '..' o '/': lista blanca, default-deny — nunca toca el FS (revisión r1)."""
     tienda = TiendaPerfilesJson(tmp_path)
     victima = tmp_path.parent / "victima.json"
     victima.write_bytes(b"CONTENIDO ORIGINAL")
