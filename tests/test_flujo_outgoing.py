@@ -1174,6 +1174,8 @@ def test_asrrealtime_init_almacena_todos_los_atributos() -> None:
         sample_rate=32000,
         etiqueta="mi etiqueta",
         post_speech_silence_duration=2.0,
+        modelo="base",
+        device="cpu",
     )
     assert asr._flujo is flujo
     assert asr._idioma == "es"
@@ -1181,6 +1183,8 @@ def test_asrrealtime_init_almacena_todos_los_atributos() -> None:
     assert asr._sample_rate == 32000
     assert asr._etiqueta == "mi etiqueta"
     assert asr._post_speech_silence_duration == 2.0
+    assert asr._modelo == "base"
+    assert asr._device == "cpu"
 
 
 def test_asrrealtime_init_defaults() -> None:
@@ -1196,6 +1200,9 @@ def test_asrrealtime_init_defaults() -> None:
     assert asr._sample_rate == 16000
     assert asr._etiqueta == "Flujo es"
     assert asr._post_speech_silence_duration == 1.5
+    # small (no tiny): tiny confundia "un bug" con "a walk" en la voz ES
+    assert asr._modelo == "small"
+    assert asr._device == "cuda"
 
 
 def test_salida_cable_abrir_usa_tasa_nativa(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1368,3 +1375,71 @@ def test_tts_no_stream_con_artefactos_no_reproduce_y_escala() -> None:
     assert flujo.segmento_final("hola") == NIVEL_SUBTITULOS  # solo subtitulos
     assert salida.reproducidos == []
     assert flujo.ultimo_turno_degradado is True
+
+
+def test_ajustes_asr_desde_env_defaults() -> None:
+    """Sin env: modelo small + device cuda (los defaults declarados)."""
+    from traductor.flujo.adaptadores import ajustes_asr_desde_env
+
+    assert ajustes_asr_desde_env({}) == ("small", "cuda")
+
+
+def test_ajustes_asr_desde_env_usa_los_nombres_del_contrato() -> None:
+    """El test fija los NOMBRES de las variables (review PR #35: el cableado
+    del script esta bajo pragma; esto bloquea el drift de nombres)."""
+    from traductor.flujo.adaptadores import ajustes_asr_desde_env
+
+    entorno = {"TRADUCTOR_MODELO_ASR": "base", "TRADUCTOR_ASR_DEVICE": "cpu"}
+    assert ajustes_asr_desde_env(entorno) == ("base", "cpu")
+
+
+def test_modelos_asr_cubren_los_del_upstream_de_faster_whisper() -> None:
+    """Lista exacta de faster-whisper 1.2 (`faster_whisper.utils._MODELS`):
+    incluye `large-v3-turbo`, `turbo` y `distil-large-v3.5`, que el review r2
+    noto faltaban (darlos por invalido parecia un typo). Si el upstream suma
+    un modelo, este test lo delata y el contrato se actualiza."""
+    from traductor.flujo.adaptadores import _MODELOS_ASR
+
+    assert {
+        "tiny",
+        "tiny.en",
+        "base",
+        "base.en",
+        "small",
+        "small.en",
+        "medium",
+        "medium.en",
+        "large",
+        "large-v1",
+        "large-v2",
+        "large-v3",
+        "large-v3-turbo",
+        "turbo",
+        "distil-large-v2",
+        "distil-large-v3",
+        "distil-large-v3.5",
+        "distil-medium.en",
+        "distil-small.en",
+    } == _MODELOS_ASR
+
+
+def test_ajustes_asr_desde_env_device_invalido_falla_rapido() -> None:
+    """`CUDA` (mayusculas) revienta al arrancar con mensaje del proyecto, no
+    dentro de CTranslate2 a mitad de la grabacion (review PR #35). Mensaje
+    EXACTO: caza los mutantes del texto (los matches parciales no)."""
+    from traductor.flujo.adaptadores import ajustes_asr_desde_env
+
+    with pytest.raises(ValueError) as excinfo:
+        ajustes_asr_desde_env({"TRADUCTOR_ASR_DEVICE": "CUDA"})
+    assert str(excinfo.value) == ("TRADUCTOR_ASR_DEVICE invalido: 'CUDA' (validos: 'cuda', 'cpu')")
+
+
+def test_ajustes_asr_desde_env_modelo_invalido_falla_rapido() -> None:
+    """Mensaje EXACTO construido con la MISMA constante del contrato: caza el
+    mutante del separador del join (review PR #35)."""
+    from traductor.flujo.adaptadores import _MODELOS_ASR, ajustes_asr_desde_env
+
+    with pytest.raises(ValueError) as excinfo:
+        ajustes_asr_desde_env({"TRADUCTOR_MODELO_ASR": "smal"})
+    esperado = f"TRADUCTOR_MODELO_ASR invalido: 'smal' (validos: {', '.join(sorted(_MODELOS_ASR))})"
+    assert str(excinfo.value) == esperado
