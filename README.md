@@ -244,10 +244,14 @@ no alucina; el cambio de `tiny` a `small` costó ~550-860 ms medidos por fragmen
 de 3 s, y cortó las alucinaciones del corpus) y `TRADUCTOR_UMBRAL_RMS` (300,
 actividad de voz del cable).
 
-Otros ajustes por env: `TRADUCTOR_MODELO_ASR` (default `small` para la voz ES del
-outgoing; `tiny` confundía "un bug" con "a walk") y `TRADUCTOR_ASR_DEVICE`
-(`cuda` o `cpu`): en GPUs de 4 GB conviene **`cpu`** para el ASR del outgoing y
-dejar la GPU al TTS y al whisper del incoming. Con micrófono de laptop, el
+Otros ajustes por env (validados al arrancar: un typo revienta con mensaje del
+proyecto, no dentro de CTranslate2 a mitad de la grabación):
+`TRADUCTOR_MODELO_ASR` (default `small` para la voz ES del outgoing; `tiny`
+confundía "un bug" con "a walk") y `TRADUCTOR_ASR_DEVICE` (`cuda` o `cpu`): en
+GPUs de 4 GB conviene **`cpu`** para el ASR del outgoing y dejar la GPU al TTS y
+al whisper del incoming (margen de VRAM: 3.3/4.0 GiB con tres modelos
+co-residentes). En CPU, medido por fragmento de 3 s de la voz ES real: `small`
+**1.9 s** (RTF 0.63) y `base` **0.7 s** (RTF 0.23). Con micrófono de laptop, el
 `TRADUCTOR_SILENCIO_TURNO_S` recomendado sube a **2.5 s** (las pausas naturales
 entre frases de un párrafo no deben cerrar el turno).
 
