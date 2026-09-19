@@ -55,8 +55,9 @@ El propósito es que puedas verificar por texto lo que entendiste y lo que vas a
 - La voz en inglés no es inmediata: el cierre del turno (el momento en que empieza a escucharse) tardó entre 4,2 y 11,5 segundos en la grabación de demostración, y unos 2 segundos para el primer audio con la GPU libre.
 - Si el entrevistador habla mientras el sistema genera tu voz, la generación se ralentiza (ver Resultados técnicos) y el final del audio puede escucharse con pausas. En la grabación de demostración el entrevistador no habla mientras se genera la voz.
 - Requiere Windows, una GPU NVIDIA compatible (la referencia es una GTX 1650 Ti de 4 GB) y los drivers virtuales [VB-CABLE](https://vb-audio.com/Cable/) y [VoiceMeeter](https://vb-audio.com/Voicemeeter/).
-- Los pesos del modelo de voz XTTS-v2 usan la licencia Coqui Personal Model License: **uso personal no comercial**. El código de este repositorio es MIT.
-- Esta versión trabaja con un perfil de voz y un idioma de salida (inglés).
+- Los pesos del modelo de voz XTTS-v2 usan la licencia **Coqui Public Model License (CPML)**; el proyecto la usa para uso personal. El código de este repositorio es MIT.
+- El flujo usa **un perfil de voz a la vez**, elegido con `TRADUCTOR_PERFIL_ID` (por defecto `kevin`); la tienda admite varios perfiles. El idioma de salida es uno (inglés).
+- En la medición de referencia, **1 de 20 corridas falló (5 %)**: la traducción murió por una descarga de spacy en ese momento. El flujo exige ahora la precarga de la traducción al arrancar y se bloquea si no está lista, pero la tasa medida se declara.
 
 ---
 
@@ -89,7 +90,7 @@ flowchart LR
     end
 ```
 
-Antes de que un audio defectuoso llegue al micrófono virtual, el sistema lo transcribe de vuelta (loopback: escribe en el cable y lo lee) y compara con el texto traducido; si encuentra diferencias grandes, no reproduce ese audio y pasa al siguiente nivel de la lista de capacidades.
+Antes de que un audio defectuoso llegue al micrófono virtual, el sistema lo transcribe de vuelta (loopback: escribe en el cable y lo lee) y compara con el texto traducido; si encuentra diferencias grandes, no reproduce ese audio y pasa al siguiente nivel de la degradación.
 
 Las piezas por etapa:
 
@@ -169,6 +170,7 @@ $env:TRADUCTOR_MIC_INDEX = "1"
 - `TRADUCTOR_FRAGMENTO_MAX_S` (4 s): tamaño máximo de cada fragmento del flujo entrante. Fragmentos más largos hacen que el modelo de transcripción invente texto.
 - `TRADUCTOR_UMBRAL_RMS` (300): nivel de voz que se considera actividad en el cable.
 - `TRADUCTOR_MODELO_ASR` (`small`) y `TRADUCTOR_ASR_DEVICE` (`cuda` o `cpu`): modelo y dispositivo de la transcripción del flujo saliente. El modelo `tiny` confundía "un bug" con "a walk"; en GPUs de 4 GB conviene `cpu` para dejar memoria a la voz y al flujo entrante. Medido en CPU sobre 3 s de voz real: `small` tarda 1,9 s y `base` 0,7 s. Un valor mal escrito se rechaza al arrancar con un mensaje claro.
+- `TRADUCTOR_PERFIL_ID` (`kevin`): perfil de voz enrolado que usa el flujo. La tienda admite varios perfiles; este valor elige uno por corrida.
 
 **Nota sobre los dispositivos MME y WASAPI:** el motor de VB-Audio funciona internamente a 44100 Hz. El mismo dispositivo expuesto por WASAPI a 48000 Hz pasa por un remuestreador que inserta saltos de fase cada ~20 ms; se oyen como clics apenas perceptibles, pero rompen la transcripción (el modelo oía "hard bug you solved" como palabras distintas). Por eso el código elige los dispositivos MME (tasa nativa de 44100). Un tono de prueba de 440 Hz sale a 440,0 Hz exactos por MME y a 522 Hz con saltos por WASAPI.
 
@@ -193,7 +195,7 @@ $env:TRADUCTOR_MIC_INDEX = "1"
 | Formato y estilo | ruff | sin avisos |
 | Tipos | mypy --strict | sin errores |
 | Comportamiento | pytest | 399 tests |
-| Cobertura de líneas | coverage | 100 % (1259 líneas) |
+| Cobertura de sentencias | coverage | 100 % (1259 sentencias) |
 | Calidad de los tests | mutmut | 0 mutantes supervivientes |
 
 La metodología completa de medición (cómo se deriva el presupuesto de latencia, las cinco rondas de corrección del banco de pruebas, la validación por loopback y los p50/p95) está en [ADR-014](docs/ADR-014-gates-aceptacion-tts.md). La corrida de resistencia de 90 minutos, los cierres de turno y su re-medición están en [ADR-019](docs/ADR-019-endurance-sesion.md).
@@ -264,7 +266,7 @@ La numeración no es contigua: los números 016 a 018 quedaron como reserva sin 
 
 Código de este repositorio: MIT.
 
-- Pesos de XTTS-v2: licencia Coqui Personal Model License, uso personal no comercial.
+- Pesos de XTTS-v2: Coqui Public Model License (CPML), usados para uso personal.
 - OpenVoice V2: MIT.
 - Supertonic 3: OpenRAIL-M.
 

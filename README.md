@@ -55,8 +55,9 @@ The point is that you can check, as text, what you understood and what you are a
 - The English voice is not immediate: closing the turn (the moment it starts playing) took 4.2 to 11.5 seconds in the demo recording, and about 2 seconds for the first audio with the GPU idle.
 - If the interviewer talks while the system is generating your voice, generation slows down (see Technical results) and the end of the audio may come out with pauses. In the demo recording this does not happen because nobody talks over it.
 - It requires Windows, a compatible NVIDIA GPU (the reference is a 4 GB GTX 1650 Ti) and the [VB-CABLE](https://vb-audio.com/Cable/) and [VoiceMeeter](https://vb-audio.com/Voicemeeter/) virtual drivers.
-- The XTTS-v2 voice model weights use the Coqui Personal Model License: **personal, non-commercial use**. The code in this repository is MIT.
-- This version works with one voice profile and one output language (English).
+- The XTTS-v2 voice model weights use the **Coqui Public Model License (CPML)**; this project uses them for personal use. The code in this repository is MIT.
+- The flow uses **one voice profile at a time**, selected with `TRADUCTOR_PERFIL_ID` (default `kevin`); the store supports several profiles. There is one output language (English).
+- In the reference measurement, **1 of 20 runs failed (5%)**: the translation stage died on a spacy download at that moment. The flow now requires the translation preload at startup and blocks if it is not ready, but the measured rate is declared.
 
 ---
 
@@ -89,7 +90,7 @@ flowchart LR
     end
 ```
 
-Before defective audio reaches the virtual microphone, the system transcribes it back (loopback: it writes to the cable and reads from it) and compares the result with the translated text; if the differences are large, that audio is not played and the flow moves to the next level of the fallback list.
+Before defective audio reaches the virtual microphone, the system transcribes it back (loopback: it writes to the cable and reads from it) and compares the result with the translated text; if the differences are large, that audio is not played and the flow moves to the next level of the fallback.
 
 The pieces, stage by stage:
 
@@ -169,6 +170,7 @@ $env:TRADUCTOR_MIC_INDEX = "1"
 - `TRADUCTOR_FRAGMENTO_MAX_S` (4 s): maximum size of each incoming fragment. Longer fragments make the transcription model invent text.
 - `TRADUCTOR_UMBRAL_RMS` (300): voice level considered activity on the cable.
 - `TRADUCTOR_MODELO_ASR` (`small`) and `TRADUCTOR_ASR_DEVICE` (`cuda` or `cpu`): model and device for the outgoing flow's transcription. The `tiny` model confused "un bug" with "a walk"; on 4 GB GPUs `cpu` is recommended to leave memory for the voice and the incoming flow. Measured on CPU over 3 s of real speech: `small` takes 1.9 s and `base` takes 0.7 s. A misspelled value is rejected at startup with a clear message.
+- `TRADUCTOR_PERFIL_ID` (`kevin`): enrolled voice profile used by the flow. The store supports several profiles; this value picks one per run.
 
 **A note on MME and WASAPI devices:** the VB-Audio engine runs internally at 44100 Hz. The same device exposed by WASAPI at 48000 Hz goes through a resampler that inserts phase jumps every ~20 ms; they sound like barely perceptible clicks, but they break transcription (the model heard "hard bug you solved" as different words). That is why the code chooses MME devices (native rate 44100). A 440 Hz test tone comes out at exactly 440.0 Hz through MME and at 522 Hz with jumps through WASAPI.
 
@@ -193,7 +195,7 @@ $env:TRADUCTOR_MIC_INDEX = "1"
 | Format and style | ruff | no warnings |
 | Types | mypy --strict | no errors |
 | Behavior | pytest | 399 tests |
-| Line coverage | coverage | 100% (1259 lines) |
+| Statement coverage | coverage | 100% (1259 statements) |
 | Test quality | mutmut | 0 surviving mutants |
 
 The full measurement methodology (how the latency budget is derived, the five rounds of correction of the test bench, the loopback validation and the p50/p95 statistics) is in [ADR-014](docs/ADR-014-gates-aceptacion-tts.md). The 90-minute endurance run, the turn closes and their re-measurement are in [ADR-019](docs/ADR-019-endurance-sesion.md).
@@ -264,7 +266,7 @@ The numbering is not contiguous: numbers 016 to 018 remain unused reserve slots;
 
 Code in this repository: MIT.
 
-- XTTS-v2 weights: Coqui Personal Model License, personal non-commercial use.
+- XTTS-v2 weights: Coqui Public Model License (CPML), used for personal use.
 - OpenVoice V2: MIT.
 - Supertonic 3: OpenRAIL-M.
 
