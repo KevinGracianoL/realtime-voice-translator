@@ -18,9 +18,22 @@
 
 </div>
 
+<p align="center">
+  <a href="docs/demo/interview-demo.mp4">
+    <img src="docs/demo/demo-preview.gif" alt="El teleprompter mostrando el inglés del entrevistador con su traducción al español" width="900" />
+  </a>
+</p>
+
+<p align="center"><a href="docs/demo/interview-demo.mp4">Ver el video completo con audio</a></p>
+
 ---
 
 ## Qué es
+
+Un asistente local para entrevistas de trabajo en inglés:
+
+- Audio del entrevistador → subtítulos en español
+- Tu respuesta en español → voz en inglés por un micrófono virtual
 
 Este programa te ayuda en una entrevista de trabajo en inglés. Escucha al entrevistador desde el audio de la llamada y muestra la traducción al español en pantalla. Cuando respondes en español por tu micrófono, transcribe tu respuesta, la traduce al inglés y la convierte en voz con un timbre clonado del tuyo, que entra a la llamada por un micrófono virtual. Todo funciona en tu propia computadora: no se envía audio ni texto a servicios en la nube.
 
@@ -30,7 +43,7 @@ El propósito es que puedas verificar por texto lo que entendiste y lo que vas a
 
 ## Video de demostración
 
-[`docs/demo/demo_portafolio.mp4`](docs/demo/demo_portafolio.mp4) (1 min 4 s) — grabación real en la máquina de referencia, con el audio del sistema:
+[`docs/demo/interview-demo.mp4`](docs/demo/interview-demo.mp4) (1 min 4 s) — grabación real en la máquina de referencia, con el audio del sistema:
 
 - El entrevistador habla en inglés y en pantalla aparece su texto con la traducción al español.
 - Al terminar de responder en español por el micrófono, se muestra el texto de tu respuesta.
@@ -270,4 +283,4 @@ Código de este repositorio: MIT.
 - OpenVoice V2: MIT.
 - Supertonic 3: OpenRAIL-M.
 
-Hecho por [Kevin Graciano](https://github.com/KevinGracianoL). Aprendiendo en público y midiendo en mi propio equipo. En el historial del repositorio no hay audios de entrevistas reales ni credenciales.
+Hecho por [Kevin Graciano](https://github.com/KevinGracianoL). Construido y medido en un Ryzen 5 4600H con una GTX 1650 Ti. En el historial del repositorio no hay audios de entrevistas reales ni credenciales.

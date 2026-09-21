@@ -18,9 +18,22 @@
 
 </div>
 
+<p align="center">
+  <a href="docs/demo/interview-demo.mp4">
+    <img src="docs/demo/demo-preview.gif" alt="The teleprompter showing the interviewer's English with its Spanish translation" width="900" />
+  </a>
+</p>
+
+<p align="center"><a href="docs/demo/interview-demo.mp4">Watch the full video with audio</a></p>
+
 ---
 
 ## What it is
+
+A local assistant for English job interviews:
+
+- Interviewer audio → Spanish subtitles
+- Your Spanish answer → English speech through a virtual microphone
 
 This program helps you during a job interview in English. It listens to the interviewer through the call audio and shows the Spanish translation on screen. When you answer in Spanish into your microphone, it transcribes your answer, translates it into English and speaks it with a voice cloned from yours, feeding it into the call through a virtual microphone. Everything runs on your own computer: no audio or text is sent to cloud services.
 
@@ -30,7 +43,7 @@ The point is that you can check, as text, what you understood and what you are a
 
 ## Demo video
 
-[`docs/demo/demo_portafolio.mp4`](docs/demo/demo_portafolio.mp4) (1 min 4 s) — a real recording on the reference machine, with system audio:
+[`docs/demo/interview-demo.mp4`](docs/demo/interview-demo.mp4) (1 min 4 s) — a real recording on the reference machine, with system audio:
 
 - The interviewer speaks English and the screen shows the text with its Spanish translation.
 - When you finish answering in Spanish into the microphone, the text of your answer appears.
@@ -270,4 +283,4 @@ Code in this repository: MIT.
 - OpenVoice V2: MIT.
 - Supertonic 3: OpenRAIL-M.
 
-Made by [Kevin Graciano](https://github.com/KevinGracianoL). Learning in public and measuring on my own machine. The repository history contains no real interview audio and no credentials.
+Made by [Kevin Graciano](https://github.com/KevinGracianoL). Built and measured on a Ryzen 5 4600H with a GTX 1650 Ti. The repository history contains no real interview audio and no credentials.
