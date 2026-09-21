@@ -6,7 +6,7 @@
 
 [English](README.md) · [Español](README.es.md)
 
-[![CI](https://github.com/KevinGracianoL/traductor-voz-entrevistas/actions/workflows/ci.yml/badge.svg)](https://github.com/KevinGracianoL/traductor-voz-entrevistas/actions)
+[![CI](https://github.com/KevinGracianoL/realtime-voice-translator/actions/workflows/ci.yml/badge.svg)](https://github.com/KevinGracianoL/realtime-voice-translator/actions)
 ![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
 ![PyTorch CUDA](https://img.shields.io/badge/PyTorch-CUDA%2013.2-EE4C2C?style=flat-square&logo=pytorch)
 ![mypy strict](https://img.shields.io/badge/mypy-strict-2A6DB5?style=flat-square)
