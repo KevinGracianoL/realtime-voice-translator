@@ -7,14 +7,14 @@
 [English](README.md) · [Español](README.es.md)
 
 [![CI](https://github.com/KevinGracianoL/realtime-voice-translator/actions/workflows/ci.yml/badge.svg)](https://github.com/KevinGracianoL/realtime-voice-translator/actions)
-![Tests](https://img.shields.io/badge/tests-399_passed-blue)
+![Tests](https://img.shields.io/badge/tests-399_passed-blue?logo=pytest&logoColor=white)
 ![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
 ![Mutation](https://img.shields.io/badge/mutmut-0_surviving_mutants-blueviolet)
 ![Endurance](https://img.shields.io/badge/endurance-90_min_verified-orange)
 ![Types](https://img.shields.io/badge/mypy_strict-0_errors-3776AB)
-![Lint](https://img.shields.io/badge/ruff-clean-FFD43B)
-![GPU](https://img.shields.io/badge/GPU-CUDA_13.2_%C2%B7_Faster--Whisper_%C2%B7_Argos_%C2%B7_XTTS--v2-76b900)
-![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+![Lint](https://img.shields.io/badge/ruff-clean-FFD43B?logo=ruff&logoColor=black)
+![GPU](https://img.shields.io/badge/GPU-CUDA_13.2_%C2%B7_Faster--Whisper_%C2%B7_Argos_%C2%B7_XTTS--v2-76b900?logo=nvidia&logoColor=white)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue?logo=python&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-yellow)
 
 **By [Kevin Graciano](https://github.com/KevinGracianoL)** — clone the repository and run it on your machine (see Installation and usage).
