@@ -7,12 +7,15 @@
 [English](README.md) · [Español](README.es.md)
 
 [![CI](https://github.com/KevinGracianoL/realtime-voice-translator/actions/workflows/ci.yml/badge.svg)](https://github.com/KevinGracianoL/realtime-voice-translator/actions)
-![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)
-![PyTorch CUDA](https://img.shields.io/badge/PyTorch-CUDA%2013.2-EE4C2C?style=flat-square&logo=pytorch)
-![mypy strict](https://img.shields.io/badge/mypy-strict-2A6DB5?style=flat-square)
-![399 tests](https://img.shields.io/badge/tests-399-2A6DB5?style=flat-square)
-![coverage 100%](https://img.shields.io/badge/coverage-100%25-brightgreen?style=flat-square)
-![License MIT](https://img.shields.io/badge/license-MIT-yellow?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-399_passed-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)
+![Mutation](https://img.shields.io/badge/mutmut-0_surviving_mutants-brightgreen)
+![Endurance](https://img.shields.io/badge/endurance-90_min_verified-brightgreen)
+![Types](https://img.shields.io/badge/mypy_strict-0_errors-brightgreen)
+![Lint](https://img.shields.io/badge/ruff-clean-brightgreen)
+![GPU](https://img.shields.io/badge/GPU-CUDA_13.2_%C2%B7_Faster--Whisper_%C2%B7_Argos_%C2%B7_XTTS--v2-76b900)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-yellow)
 
 **Por [Kevin Graciano](https://github.com/KevinGracianoL)** — clona el repositorio y ejecútalo en tu equipo (ver Instalación y uso).
 
